@@ -1,2 +1,12 @@
 .jac/
 node_modules/
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+.jac-server.log
+.jac-preview*
+.jac-deps-*
+.jac-start
