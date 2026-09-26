@@ -1,4 +1,4 @@
-"""Graph model: nodes, enums. Grows each phase; fields follow section 6."""
+"""Graph model: nodes, edges, enums (build prompt section 6)."""
 
 enum Mode: str {
     FULL = "FULL",
@@ -20,11 +20,87 @@ sem Verdict.ESCALATE = "Payment needs a human decision on the dashboard.";
 sem Verdict.DENY = "Payment is blocked.";
 sem Verdict.NEEDS_ANSWERS = "Agent must answer verification questions first.";
 
+enum Severity: str {
+    HARD = "HARD",
+    SOFT = "SOFT",
+    INFO = "INFO"
+}
+
+sem Severity.HARD = "A failed HARD check blocks the payment outright (DENY).";
+sem Severity.SOFT = "A failed SOFT check needs verification or a human (ESCALATE).";
+sem Severity.INFO = "Informational only; never changes the verdict.";
+
+enum EvidenceKind: str {
+    ACCOUNT = "ACCOUNT",
+    AMOUNT = "AMOUNT",
+    NAME = "NAME",
+    INVOICE_ID = "INVOICE_ID",
+    OTHER = "OTHER"
+}
+
+sem EvidenceKind.ACCOUNT = "A bank account number.";
+sem EvidenceKind.AMOUNT = "A money amount, stored as integer cents.";
+sem EvidenceKind.NAME = "A payee or vendor name.";
+sem EvidenceKind.INVOICE_ID = "An invoice identifier such as INV-4471.";
+sem EvidenceKind.OTHER = "Any other recorded value, e.g. an email sender.";
+
+enum SourceType: str {
+    EMAIL = "EMAIL",
+    INSTRUCTION = "INSTRUCTION",
+    VENDOR_RECORD = "VENDOR_RECORD"
+}
+
+sem SourceType.EMAIL = "Came from the inbox. Untrusted: anyone can send an email.";
+sem SourceType.INSTRUCTION = "Came from the user's own instruction. Trusted.";
+sem SourceType.VENDOR_RECORD = "Came from the vendor master file. Trusted.";
+
+# ---------- nodes ----------
+
 node Settings {
     has mode: str = "FULL",
         llm_checks_enabled: bool = True,
         per_txn_cap_cents: int = 500000,
-        allowlist: list[str] = ["acme supplies"];
+        allowlist: list[str] = ["acme supplies", "verify services"],
+        evidence_seq: int = 0;
+}
+
+node Vendor {
+    has name: str,
+        known_account: str,
+        first_seen: str = "";
+}
+
+node Invoice {
+    has invoice_id: str,
+        vendor_name: str,
+        amount_cents: int,
+        period: str,
+        paid: bool = False;
+}
+
+node Email {
+    has email_id: str,
+        sender: str,
+        subject: str,
+        body: str,
+        received_at: str;
+}
+
+node Instruction {
+    has instruction_id: str,
+        text: str,
+        created_at: str;
+}
+
+node Evidence {
+    has evidence_id: str,
+        raw_value: str,
+        normalized_value: str,
+        kind: str,
+        source_type: str,
+        source_id: str,
+        trusted: bool,
+        first_seen: str;
 }
 
 node PaymentRequest {
@@ -35,12 +111,21 @@ node PaymentRequest {
         currency: str = "USD",
         invoice_id: str = "",
         instruction_id: str = "",
+        evidence_ids: list[str] = [],
         reason_text: str = "",
         status: str = "PENDING",
         verdict: str = "",
         payment_ref: str | None = None,
         mode: str = "FULL",
         created_at: str = "";
+}
+
+node CheckResult {
+    has name: str,
+        passed: bool,
+        severity: str,
+        detail: str,
+        evidence_node_ids: list[str] = [];
 }
 
 node AuditEntry {
@@ -50,6 +135,18 @@ node AuditEntry {
         detail: str = "";
 }
 
+# ---------- edges ----------
+
+edge DerivedFrom {}
+edge PaysTo {}
+edge AuthorizedBy {}
+edge CitesEvidence {}
+edge MatchedTo {
+    has field: str = "";
+}
+edge HasCheck {}
+
+# ---------- lookups ----------
 
 def get_settings_node -> Settings {
     found = [root -->][?:Settings];
@@ -64,6 +161,26 @@ def find_request(request_id: str) -> PaymentRequest | None {
     for pr in [root -->][?:PaymentRequest] {
         if pr.request_id == request_id {
             return pr;
+        }
+    }
+    return None;
+}
+
+
+def find_instruction(instruction_id: str) -> Instruction | None {
+    for i in [root -->][?:Instruction] {
+        if i.instruction_id == instruction_id {
+            return i;
+        }
+    }
+    return None;
+}
+
+
+def find_invoice(invoice_id: str) -> Invoice | None {
+    for inv in [root -->][?:Invoice] {
+        if inv.invoice_id.upper() == invoice_id.strip().upper() {
+            return inv;
         }
     }
     return None;

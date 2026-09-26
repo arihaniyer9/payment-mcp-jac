@@ -3,9 +3,15 @@ returns a dict with a top-level f"ok". Auth runs BEFORE any graph read/write."""
 import from datetime { datetime, timezone }
 import from jac.auth { Role, authorize, fail, ok }
 import from jac.graph {
-    Settings, PaymentRequest, AuditEntry, Mode, Verdict,
-    get_settings_node, find_request
+    Settings, PaymentRequest, AuditEntry, Email, Instruction, Vendor, Invoice,
+    PaysTo, Mode, Verdict, get_settings_node, find_request
 }
+import from jac.evidence {
+    register_email, register_instruction, register_vendor, register_invoice,
+    evidence_view
+}
+import from jac.seed { wipe_graph, seed_demo }
+import from jac.pipeline { decision_view }
 
 
 def _now -> str {
@@ -125,12 +131,94 @@ def:pub reset_demo(api_key: str = "") -> dict[str, any] {
     if denied is not None {
         return denied;
     }
-    for n in [root -->] {
-        del n;
-    }
-    root ++> Settings();
+    wipe_graph();
+    seed_demo();
     _audit("RESET_DEMO", "", "graph wiped and reseeded");
-    return ok({"reset": True});
+    return ok({"reset": True, "counts": {
+        "vendors": len([root -->][?:Vendor]),
+        "invoices": len([root -->][?:Invoice]),
+        "emails": len([root -->][?:Email]),
+        "instructions": len([root -->][?:Instruction])
+    }});
+}
+
+
+def:pub get_decision(api_key: str = "", request_id: str = "") -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    pr = find_request(request_id);
+    if pr is None {
+        return fail("NOT_FOUND", f"No payment request {request_id}.");
+    }
+    return ok({"decision": decision_view(pr), "request": _request_view(pr)});
+}
+
+
+# ---------- agent read tools: every value handed out is recorded as Evidence ----------
+
+def:pub read_inbox(api_key: str = "") -> dict[str, any] {
+    denied = authorize(api_key, Role.AGENT);
+    if denied is not None {
+        return denied;
+    }
+    emails: list[dict[str, any]] = [];
+    for em in [root -->][?:Email] {
+        evs = register_email(em);
+        emails.append({
+            "email_id": em.email_id, "sender": em.sender, "subject": em.subject,
+            "body": em.body, "received_at": em.received_at,
+            "trusted": False,
+            "evidence": [evidence_view(e) for e in evs]
+        });
+    }
+    return ok({"emails": emails});
+}
+
+
+def:pub get_instructions(api_key: str = "") -> dict[str, any] {
+    denied = authorize(api_key, Role.AGENT);
+    if denied is not None {
+        return denied;
+    }
+    items: list[dict[str, any]] = [];
+    for ins in [root -->][?:Instruction] {
+        evs = register_instruction(ins);
+        items.append({
+            "instruction_id": ins.instruction_id, "text": ins.text,
+            "created_at": ins.created_at, "trusted": True,
+            "evidence": [evidence_view(e) for e in evs]
+        });
+    }
+    return ok({"instructions": items});
+}
+
+
+def:pub get_vendors(api_key: str = "") -> dict[str, any] {
+    denied = authorize(api_key, Role.AGENT);
+    if denied is not None {
+        return denied;
+    }
+    items: list[dict[str, any]] = [];
+    for v in [root -->][?:Vendor] {
+        evs = register_vendor(v);
+        invoices: list[dict[str, any]] = [];
+        for inv in [v <-:PaysTo:<-][?:Invoice] {
+            inv_evs = register_invoice(inv);
+            invoices.append({
+                "invoice_id": inv.invoice_id, "period": inv.period,
+                "amount": inv.amount_cents / 100, "paid": inv.paid,
+                "evidence": [evidence_view(e) for e in inv_evs]
+            });
+        }
+        items.append({
+            "name": v.name, "known_account": v.known_account, "trusted": True,
+            "evidence": [evidence_view(e) for e in evs],
+            "open_invoices": invoices
+        });
+    }
+    return ok({"vendors": items});
 }
 
 
