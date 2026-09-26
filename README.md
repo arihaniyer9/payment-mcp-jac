@@ -1,30 +1,77 @@
-# Proof of Purpose — authentication proof checkpoint
+# Proof of Purpose — MCP Payment Firewall (Jac core)
 
-This workspace currently contains the Jac Phase 0 smoke test and an **unintegrated API-key proof**, not the payment firewall. The hosted Jac API listens on port 8001; the JacHammer preview owns the server lifecycle.
+Status: **Phase 0 complete, auth layer done and tested. Phase 1 next.**
 
-## Current proof endpoints
+## THE `ok`-FIELD CONTRACT (read this first — dashboard + MCP wrapper)
 
-Keys are provided in the JSON body for this approved fallback (the original `X-API-Key` header proof could not be implemented through the endpoint signature). Configure `AGENT_API_KEY` and `ADMIN_API_KEY` in JacHammer Settings → Environment, then restart the preview.
+Every Jac endpoint returns HTTP **200** inside Jac's envelope, **including auth failures**.
+Jac 0.34.20 has no supported request-level hook to return 401/403.
 
-| Endpoint | JSON body | Expected data result |
+```json
+{"ok": true, "data": {"result": { "ok": false, "error": {"code": "UNAUTHORIZED", "message": "..."} }}}
+```
+
+Rules every client MUST follow:
+
+1. Read `data.result`. It is always an object with a boolean `ok`.
+2. **`data.result.ok === true` is the only success.** HTTP 200 alone means nothing.
+3. On `ok: false`, `error.code` is one of `UNAUTHORIZED`, `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`.
+4. A response without a boolean `data.result.ok` is a contract violation: treat it as failure.
+5. The outer envelope `ok` (transport) must also be `true`; `false` there is a server error.
+
+## Authentication
+
+The key goes in the **JSON body** as `api_key` (not a header), on every request.
+
+| Key (env var) | Allowed endpoints |
+|---|---|
+| `AGENT_API_KEY` | `request_payment`, `answer_verification`, `read_inbox`, `get_instructions`, `get_vendors`, `agent_ping` |
+| `ADMIN_API_KEY` | `resolve_escalation`, `set_mode`, `set_llm_checks`, `reset_demo`, `list_*`, `get_*` |
+
+Keys are role-specific: the admin key is rejected on agent endpoints and vice versa.
+Set both in JacHammer Settings → Environment (or `.env` locally), then restart.
+
+## Endpoints available now
+
+All are `POST {JAC_API_URL}/function/<name>` with a JSON body.
+
+| Endpoint | Body (besides `api_key`) | Success result |
 |---|---|---|
-| `POST /function/agent_auth_proof` | `{"api_key":"<agent key>"}` | `{"ok":true,"role":"agent"}` for the matching agent key; otherwise `{ "ok":false,"status":401,"error":"Unauthorized" }` |
-| `POST /function/admin_auth_proof` | `{"api_key":"<admin key>","action":"set_mode"}` | success for the matching admin key and an allowed action; otherwise unauthorized |
+| `agent_ping` | — | `{ok, role: "agent"}` |
+| `get_settings` | — | `{ok, settings: {mode, llm_checks_enabled, per_txn_cap_cents, allowlist}}` |
+| `set_mode` | `mode: "FULL" \| "RULES_ONLY"` | `{ok, settings}` |
+| `set_llm_checks` | `enabled: bool` | `{ok, settings}` |
+| `list_escalations` | — | `{ok, escalations: [request]}` |
+| `resolve_escalation` | `request_id`, `action: "APPROVE" \| "DENY"` | `{ok, request}` (gateway call wired in Phase 4) |
+| `get_request_status` | `request_id` | `{ok, request}` |
+| `reset_demo` | — | `{ok, reset: true}` (seed data added in Phase 2) |
+| `debug_create_escalation` | `request_id` | test fixture, removed once the pipeline exists |
 
-Allowed proof actions: `resolve_escalation`, `set_mode`, `set_llm_checks`, `reset_demo`. These are labels for the proof only; the endpoint does not perform admin operations.
+`request` = `{request_id, payee_name, amount_cents, currency, invoice_id, status, verdict, payment_ref, mode, created_at}`.
+The full section-10 list (decisions, evidence graph) will be documented here as each phase lands.
 
-**Important limitation:** Jac's REST response envelope remains HTTP 200 for unauthorized proof results; the `status: 401` value is inside `data.result`. This is not true HTTP access control and is not sufficient to protect real payment/admin endpoints. The check compares keys inside the endpoint. Do not wire it into real operations until an actual HTTP-level protection mechanism is proven. The body-key fallback also changes the API contract and request bodies may be logged.
+## Configuration
 
-The original undocumented FastAPI request-object approach was tried and failed at endpoint schema generation (`PydanticSchemaGenerationError` for `starlette.requests.Request`, route returned 404). If a supported server-level auth hook is established, prefer that; otherwise a real ASGI middleware is needed to return HTTP 401 before dispatch.
+| Variable | Purpose |
+|---|---|
+| `GROQ_API_KEY` | byLLM provider key |
+| `LLM_MODEL` | defaults to `groq/openai/gpt-oss-120b`; swap without code changes |
+| `AGENT_API_KEY`, `ADMIN_API_KEY` | role keys (above) |
+| `MOCK_GATEWAY` | `true` by default: no Stripe network calls |
+| `JAC_API_URL` | used by the Python MCP server, agent and tests |
 
-## Proof status — incomplete; not safe for real endpoints
+## Running the tests
 
-The FastAPI `Request` endpoint parameter failed Jac's endpoint schema generation (`PydanticSchemaGenerationError`). The approved JSON-body fallback allows Jac to compare strings, but it **does not enforce HTTP-level access control**: an unauthorized result is returned inside a normal HTTP 200 envelope. The current preview also lacks `AGENT_API_KEY` and `ADMIN_API_KEY`, so matching-key calls cannot be demonstrated there. Do not use these proof functions to protect real operations.
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+export JAC_API_URL=http://localhost:8001 AGENT_API_KEY=... ADMIN_API_KEY=...
+.venv/bin/python -m pytest tests/ -v
+```
 
-Direct, local Jac logic check with test-only process environment values passed: correct agent key succeeds; missing/wrong agent key rejected; correct admin key/action succeeds; agent key denied for all four admin labels. This is only a pure logic test—not an HTTP test. There is no committed API integration test until a server-level hook capable of returning actual 401/403 is established. An ASGI middleware or supported authentication extension is required before Phase 1.
+`tests/test_auth.py` checks the `ok` contract on every response. It also checks that rejected
+admin actions **never execute**: escalation still `PENDING`, settings unchanged, and data survives an agent-key `reset_demo`.
 
-## Groq smoke status
+## Known gap
 
-`jac.toml` uses `GROQ_API_KEY`, model `${LLM_MODEL:-groq/llama-3.3-70b-versatile}`, and temperature 0. The key now reaches Groq, but both smoke calls fail with `model_not_found` for `llama-3.3-70b-versatile`. Select a model accessible to the Groq account via `LLM_MODEL` in Settings → Environment, restart, and re-run before relying on any LLM checks.
-
-See [NOTES.md](NOTES.md) for Phase 0 syntax/HTTP findings and outstanding decisions. **Phase 1 has not started.**
+Auth failures are not real HTTP 401/403 responses (see NOTES.md). If a future Jac version exposes request middleware,
+move the check there and keep the `ok` field for compatibility.

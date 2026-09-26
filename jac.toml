@@ -7,7 +7,7 @@ kind = "web-app"
 
 [byllm]
 [byllm.model]
-default_model = "${LLM_MODEL:-groq/llama-3.3-70b-versatile}"
+default_model = "${LLM_MODEL:-groq/openai/gpt-oss-120b}"
 api_key = "${GROQ_API_KEY:-}"
 
 [byllm.call_params]
