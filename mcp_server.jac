@@ -9,16 +9,18 @@ Run: jac run mcp_server.jac
 import os;
 import time;
 import from mcp.server.mcpserver { MCPServer, Context }
-import from services.models { Mandate }
-import from services.tools { plan_instructions, submit_plan as vet_submitted_plan, purchase as vet_and_buy }
+import from services.models { Mandate, Purchase }
+import from services.tools { accepted_items, plan_instructions, submit_plan as vet_submitted_plan, purchase as vet_and_buy }
 import from services.vetting { money, extract_mandate, retrying }
 
 glob mcp = MCPServer(
     "plan-graph-payments",
     instructions="These tools are for an autonomous purchasing agent. Once the user has given a goal and budget, plan and buy without asking the user for confirmation or more details: choose sensible defaults for anything unstated. The server vets every plan and purchase against the user's mandate, so that is the safety check, not the user. Only a missing budget needs the user.",
 );
-# ponytail: one mandate per client session, kept for the process lifetime; evict old sessions if memory matters.
+# ponytail: one mandate per client session, in memory; a restart forgets every session.
 glob mandates: dict[str, Mandate] = {};
+# A client can reuse its session across conversations, so a mandate ends once every item is bought or after this long.
+glob MANDATE_TTL_S = 6 * 3600;
 glob NO_GOAL = {"ok": False, "error": "No goal yet. Call get_plan_instructions with the user's request first."};
 
 """The client's MCP session id over HTTP; stdio has one client, so one key."""
@@ -28,7 +30,19 @@ def key(ctx: Context) -> str {
 
 """This session's mandate, once get_plan_instructions has set its goal. Kept in the graph as an audit trail."""
 def current(ctx: Context) -> Mandate | None {
-    return mandates.get(key(ctx));
+    m = mandates.get(key(ctx));
+    if m is not None and (time.time() - m.created_at > MANDATE_TTL_S or finished(m)) {
+        del mandates[key(ctx)];
+        return None;
+    }
+    return m;
+}
+
+"""True once every item of the accepted plan has an approved purchase."""
+def finished(m: Mandate) -> bool {
+    items = accepted_items(m);
+    bought = {p.node_id for p in [m -->[?:Purchase]] if p.approved};
+    return bool(items) and set(items) <= bought;
 }
 
 def logged(m: Mandate, name: str, args: dict, result: dict) -> dict {
@@ -42,6 +56,10 @@ Then carry out the instructions autonomously, without asking the user to confirm
 @mcp.tool()
 def get_plan_instructions(request: str, ctx: Context) -> str {
     m = current(ctx);
+    header = "";
+    if m is not None and request != m.request {
+        header = "This session already has a mandate; its goal and budget are fixed until every item is bought, so the new request was not applied.\n";
+    }
     if m is None {
         draft = retrying(extract_mandate, request);
         if draft.budget_usd <= 0 {
@@ -51,7 +69,7 @@ def get_plan_instructions(request: str, ctx: Context) -> str {
         root ++> m;
         mandates[key(ctx)] = m;
     }
-    return plan_instructions(m);
+    return f"{header}Mandate: {m.goal}, budget ${m.budget:.2f} (USD). Tell the user this budget.\n\n{plan_instructions(m)}";
 }
 
 """Step 2. Submit the plan graph for vetting. nodes: [{id, kind: item|subgoal|goal, name, price}], edges: [{child, parent}].
