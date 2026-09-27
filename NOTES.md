@@ -170,6 +170,32 @@ deleted, only updated. Verified: node and edge counts identical across 5 resets.
 - The preview sandbox is slow (1 vCPU, heavily shared, `--dev` server). Run
   tests one function at a time there.
 
+## Verification record (2026-09-27)
+
+What has actually been run, on which code. The README status section is the
+summary; this is the detail.
+
+| Check | Result | Code version |
+|---|---|---|
+| `tests/test_auth.py` | 35/35 | Before Phase 3 (escalation fixture since changed to a real `request_payment`) |
+| `tests/test_phase1.py` | 3/3 | Phase 3 |
+| `tests/test_scenarios.py` | 8/8 | Before Phase 3 |
+| `tests/test_context.py` | 14/14 | Before Phase 3 (3 MCP admin-tool tests added since, not run) |
+| `tests/test_phase3.py` | 8/8 | Phase 3 with LLM-plus-override intent logic |
+| `tests/test_phase4.py` | never run | — |
+| Scenario 3 reliability | 10/10 (override fired in 15 of 20 intent calls) | LLM-plus-override, since replaced by `instruction_scope_check` |
+| Scenario 4 reliability | 10/10 | Phase 3 |
+| Scenario 5 round trip | truthful → APPROVE, lying → DENY | Phase 3 |
+| Reset stability | 5/5 identical | Update-in-place reset |
+| Real Stripe test charge | never run | — |
+
+Scenario 3 findings that led to the current design (`scripts/explain_intent.py`,
+since removed): for the authorized INV-4471 the model sometimes said
+EXCEEDS_SCOPE, and for INV-4502 it said UNRELATED in 2/4 runs while its own
+rationale said the payee matched. When the instruction names an invoice number
+the answer is an exact comparison, so it is now decided deterministically; the
+LLM covers only instructions that name no invoice.
+
 ## Deviations from the build prompt
 
 1. Auth key is in the JSON body (`api_key`), not an `X-API-Key` header.
