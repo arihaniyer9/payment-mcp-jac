@@ -1,6 +1,6 @@
 """Formatting helpers shared by the UI sections."""
 
-glob NL: str = chr(10);
+glob:pub NL: str = chr(10);
 
 def:pub usd(x: float) -> str {
     return "$" + f"{x:.2f}";

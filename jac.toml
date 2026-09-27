@@ -22,16 +22,19 @@ zod = "^4.3.6"
 [dependencies.npm.dev]
 vite = "^6.4.1"
 "@vitejs/plugin-react" = "^4.2.1"
+typescript = "^5.3.3"
+"@types/react" = "^18.2.0"
+"@types/react-dom" = "^18.2.0"
 
 [plugins.byllm.model]
 default_model = "${TEXT_MODEL:-groq/openai/gpt-oss-20b}"
 
-[serve]
-base_route_app = "app"
-
 [plugins.client.app_meta_data]
 title = "Spending mandate"
 description = "An agent spends money; every plan and purchase is checked first."
+
+[serve]
+base_route_app = "app"
 
 [scripts]
 dev = "jac start --dev main.jac"
