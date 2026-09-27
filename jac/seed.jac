@@ -10,7 +10,7 @@ it also deletes (engine quirk, see NOTES.md).
 """
 import from jac.graph {
     Settings, Email, PaymentRequest, CheckResult, Question, Evidence, AuditEntry,
-    HasCheck, HasQuestion
+    Vendor, Invoice, Instruction, HasCheck, HasQuestion
 }
 import from jac.context { upsert_vendor, upsert_invoice, upsert_instruction }
 
@@ -112,10 +112,37 @@ def _restore_emails {
 }
 
 
-"""Reset the demo: delete run artifacts, then write the Acme seed through the
-Context Registration upserts. Idempotent: node/edge counts identical per call."""
+"""Remove context a developer registered on top of the seed (e.g. test vendors).
+Only deletes; the seed nodes themselves are never deleted, so the upserts below
+update them in place and do not create a node of a type deleted here (unless
+the seed node is missing entirely, which only happens on a fresh database)."""
+def clear_non_seed_context {
+    seed_vendors = [v["name"] for v in VENDORS];
+    seed_invoices = [i["invoice_id"] for i in INVOICES];
+    seed_instructions = [i["instruction_id"] for i in INSTRUCTIONS];
+    for inv in [root -->][?:Invoice] {
+        if inv.invoice_id not in seed_invoices {
+            del inv;
+        }
+    }
+    for v in [root -->][?:Vendor] {
+        if v.name not in seed_vendors {
+            del v;
+        }
+    }
+    for ins in [root -->][?:Instruction] {
+        if ins.instruction_id not in seed_instructions {
+            del ins;
+        }
+    }
+}
+
+
+"""Reset the demo: delete run artifacts and non-seed context, then write the
+Acme seed through the Context Registration upserts. Idempotent."""
 def reset_seed_data {
     clear_run_artifacts();
+    clear_non_seed_context();
     _restore_settings();
     for v in VENDORS {
         upsert_vendor(v["name"], v["known_account"], v["first_seen"]);

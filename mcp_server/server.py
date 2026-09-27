@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 
 JAC_API_URL = os.getenv("JAC_API_URL", "http://localhost:8001").rstrip("/")
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 
 mcp = FastMCP("proof-of-purpose")
 
@@ -25,11 +26,14 @@ class JacError(RuntimeError):
     pass
 
 
-def call_jac(endpoint: str, **payload: Any) -> dict:
-    """POST to a Jac function endpoint and enforce the ok-field contract."""
+def call_jac(endpoint: str, key: str | None = None, **payload: Any) -> dict:
+    """POST to a Jac function endpoint and enforce the ok-field contract.
+
+    Uses the agent key unless an explicit key is given (admin tools only).
+    """
     resp = httpx.post(
         f"{JAC_API_URL}/function/{endpoint}",
-        json={"api_key": AGENT_API_KEY, **payload},
+        json={"api_key": AGENT_API_KEY if key is None else key, **payload},
         timeout=60,
     )
     resp.raise_for_status()
@@ -119,13 +123,51 @@ def request_payment(
     )
 
 
+# ---------- admin-only context registration tools ----------
+# These authenticate with ADMIN_API_KEY, never the agent key. They are only
+# registered when the server is started with --admin-tools, so an agent-facing
+# deployment does not expose them at all. Even if exposed, the Jac core rejects
+# them unless ADMIN_API_KEY is valid.
+
+def _admin(endpoint: str, **payload: Any) -> dict:
+    if not ADMIN_API_KEY:
+        raise JacError("UNAUTHORIZED: ADMIN_API_KEY is not configured for this server.")
+    return call_jac(endpoint, key=ADMIN_API_KEY, **payload)
+
+
+def register_vendor(name: str, known_account: str) -> dict:
+    """ADMIN: register or update a vendor and its bank account on file (trusted ground truth)."""
+    return _admin("register_vendor", name=name, known_account=known_account)
+
+
+def register_invoice(invoice_id: str, vendor_name: str, amount: float, period: str) -> dict:
+    """ADMIN: register or update an open invoice for an already-registered vendor."""
+    return _admin("register_invoice", invoice_id=invoice_id, vendor_name=vendor_name,
+                  amount=amount, period=period)
+
+
+def register_instruction(text: str, instruction_id: str = "") -> dict:
+    """ADMIN: register a user payment instruction. Returns its instruction_id."""
+    return _admin("register_instruction", text=text, instruction_id=instruction_id)
+
+
+ADMIN_TOOLS = [register_vendor, register_invoice, register_instruction]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--http", action="store_true", help="serve over streamable HTTP")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--admin-tools", action="store_true",
+                        help="also expose register_* tools (requires ADMIN_API_KEY)")
     args = parser.parse_args()
     if not AGENT_API_KEY:
         raise SystemExit("AGENT_API_KEY must be set")
+    if args.admin_tools:
+        if not ADMIN_API_KEY:
+            raise SystemExit("--admin-tools requires ADMIN_API_KEY")
+        for fn in ADMIN_TOOLS:
+            mcp.tool()(fn)
     if args.http:
         mcp.settings.port = args.port
         mcp.run(transport="streamable-http")

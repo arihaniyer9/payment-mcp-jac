@@ -35,6 +35,42 @@
 - Contract: every result has top-level `ok`; failures add `error: {code, message}`.
 - `tests/test_auth.py`: 35/35 pass live, including "action never executes" checks.
 
+## ENGINE QUIRK: delete + create of the same node type in one request
+
+> **Watch for this pattern anywhere in the codebase.** Before writing any code
+> path, check: does one request delete nodes of type X and also create a node of
+> type X? If so, restructure it.
+
+- **Symptom:** nodes created after a delete of the same archetype in the same
+  request can be lost (not persisted). Observed with the original wipe-and-reseed
+  `reset_demo` (graph empty on every other reset) and with `AuditEntry` (reset
+  deleted all audit entries, then wrote one; stored rows grew irregularly).
+- **Not the cause:** `[root -->]` is a plain list evaluated eagerly (probe
+  verified), so iterating it while mutating edges is safe.
+- **Fix pattern:** update existing nodes in place; only create when none
+  exists; never create a type you just deleted in the same request.
+- **Applied in:** `jac/seed.jac` (reset), `jac/context.jac` (upserts never delete),
+  evidence supersede (marks old Evidence untrusted instead of deleting it;
+  Evidence is only created at read time, never in the reset/registration path).
+- **Check next:** Phase 3 `Question` cleanup in the interrogator and Phase 4
+  `resolve_escalation`.
+- Verified stable: 5x `reset_demo` and 4 rounds of A/B/A account re-registration
+  give identical stored anchor counts (`scripts/reset_stability.py`,
+  `scripts/account_churn.py`).
+
+## Deliberate limitations
+
+- `reset_demo` writes **no** AuditEntry (it deletes all audit entries; writing
+  one in the same request hits the quirk above).
+- Verify Services stays on the RULES_ONLY allowlist on purpose, so the
+  side-by-side scenario 4 comparison (RULES_ONLY approves, FULL denies) works.
+- `.jac/data/` holds ~340 orphan rows from early delete/disconnect resets. Stable,
+  not growing. Do **not** wipe until the team schedules it with time to verify
+  the graph reseeds right after.
+- Trusted Evidence is created lazily, when `get_vendors`/`get_instructions` shows
+  the value to the agent, not at registration. Evidence = "the system showed the
+  agent this value from this source".
+
 ## Deviations from the build prompt
 
 1. No `pip show` (single binary).
