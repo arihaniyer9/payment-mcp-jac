@@ -10,7 +10,7 @@ import from jac.evidence {
     register_email, register_instruction, register_vendor, register_invoice,
     evidence_view
 }
-import from jac.seed { wipe_graph, seed_demo }
+import from jac.seed { reset_seed_data }
 import from jac.pipeline { decision_view }
 
 
@@ -131,15 +131,10 @@ def:pub reset_demo(api_key: str = "") -> dict[str, any] {
     if denied is not None {
         return denied;
     }
-    wipe_graph();
-    seed_demo();
-    _audit("RESET_DEMO", "", "graph wiped and reseeded");
-    return ok({"reset": True, "counts": {
-        "vendors": len([root -->][?:Vendor]),
-        "invoices": len([root -->][?:Invoice]),
-        "emails": len([root -->][?:Email]),
-        "instructions": len([root -->][?:Instruction])
-    }});
+    # No audit entry here: reset wipes AuditEntry, and deleting + creating the
+    # same node type in one request left orphaned rows in storage.
+    reset_seed_data();
+    return ok({"reset": True});
 }
 
 

@@ -33,6 +33,14 @@ def run(*scenarios: str) -> dict[str, list[dict]]:
     return asyncio.run(replay_agent.run_scenarios(list(scenarios), uuid.uuid4().hex[:6]))
 
 
+def run_evidence_reads() -> None:
+    agent_key = os.environ["AGENT_API_KEY"]
+    for name in ("read_inbox", "get_instructions", "get_vendors"):
+        r = httpx.post(f"{BASE_URL}/function/{name}",
+                       json={"api_key": agent_key}, timeout=60).json()
+        assert r["data"]["result"]["ok"] is True
+
+
 def failed(decision: dict) -> dict[str, str]:
     return {c["name"]: c["severity"] for c in decision["checks"] if not c["passed"]}
 
@@ -84,10 +92,13 @@ def test_duplicate_payment_of_paid_invoice_denied(full_mode_no_llm):
 
 
 def test_idempotent_retry_does_not_charge_twice(full_mode_no_llm):
+    # replay_agent.run() skips read_inbox/get_vendors, so after a reset no
+    # evidence exists yet; register it first like a real agent would.
+    run_evidence_reads()
     rid = f"idem_{uuid.uuid4().hex[:6]}"
     first = asyncio.run(replay_agent.run(rid))
     second = asyncio.run(replay_agent.run(rid))
-    assert first["verdict"] == "APPROVE"
+    assert first["verdict"] == "APPROVE", failed(first)
     assert second["idempotent_replay"] is True
     assert second["payment_ref"] == first["payment_ref"]
     assert second["verdict"] == "APPROVE", "a replay must not be re-checked as a duplicate"
