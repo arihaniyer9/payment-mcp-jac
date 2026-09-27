@@ -3,3 +3,4 @@
 __pycache__/
 *.jir
 .jac/
+.DS_Store
