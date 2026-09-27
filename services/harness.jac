@@ -9,6 +9,9 @@ pending tool calls and helper agents all live in the graph and survive a page re
 
 The agent can't browse. Purchases are checked against the product page as the server itself
 fetches it, so an agent can't pay a URL that doesn't load or a price that isn't on the page.
+
+The payment tools run on the remote MCP server at MCP_URL (one MCP session per mandate), so the
+vetting and Stripe authorization happen there. The UI still replays everything from this graph's events.
 """
 import os;
 import re;
@@ -16,7 +19,6 @@ import json;
 import time;
 import httpx;
 import from services.models { Mandate, AgentRun, Spawned, Event }
-import from services.tools { plan_instructions, submit_plan, purchase }
 import from services.vetting { num }
 
 # Mistral's API (OpenAI-compatible chat + tools). Codestral follows the tool protocol best on the free tier;
@@ -24,6 +26,7 @@ import from services.vetting { num }
 glob LLM_URL = "https://api.mistral.ai/v1/chat/completions";
 glob AGENT_MODEL = os.getenv("AGENT_MODEL", "codestral-latest");
 glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "ministral-14b-latest");
+glob MCP_URL = os.getenv("MCP_URL", "https://jacpay.onrender.com/mcp");
 glob MAX_STEPS = 80;
 glob MAX_HELPERS = 2;
 
@@ -280,18 +283,87 @@ def dispatch(m: Mandate, a: AgentRun, name: str, args: dict) -> dict {
     }
     try {
         if name == "get_plan_instructions" {
-            return {"instructions": plan_instructions(m)};
+            # The human's words (and the goal and budget they confirmed) come from the graph, never the agent.
+            request = f"{m.request}\n\nConfirmed goal: {m.goal}. Total budget: ${m.budget:.2f}.";
+            return remote_tool(m, name, {"request": request});
         }
         if name == "submit_plan" {
-            return submit_plan(m, list(args.get("nodes") or []), list(args.get("edges") or []));
+            return remote_tool(m, name, {"nodes": list(args.get("nodes") or []), "edges": list(args.get("edges") or [])});
         }
         if name == "purchase" {
-            return purchase(m, a.name, str(args.get("node_id", "")), str(args.get("item_name", "")), str(args.get("payment_url", "")), num(args.get("price", 0)));
+            args = {"node_id": str(args.get("node_id", "")), "item_name": str(args.get("item_name", "")), "payment_url": str(args.get("payment_url", "")), "price": num(args.get("price", 0))};
+            result = remote_tool(m, name, args);
+            if result.get("approved") and "spent" in result {
+                m.spent = num(result["spent"]);
+            }
+            return result;
         }
     } except (KeyError, TypeError, ValueError) as e {
         return {"error": f"bad arguments for {name}: {e}"};
+    } except (httpx.HTTPError, RuntimeError) as e {
+        return {"error": f"payment server unavailable: {e}"};
     }
     return {"error": f"unknown tool '{name}'"};
+}
+
+# ---------------------------------------------------------------- remote MCP server
+
+"""One JSON-RPC message to the MCP server. Returns the response and its body (the last SSE data line, or plain JSON)."""
+def mcp_post(session: str, body: dict) -> tuple {
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json", "MCP-Protocol-Version": "2025-06-18"};
+    if session {
+        headers["Mcp-Session-Id"] = session;
+    }
+    # Render's free tier sleeps; the first request wakes it in up to about a minute.
+    r = httpx.post(MCP_URL, headers=headers, json=body, timeout=120);
+    if r.status_code == 404 and session {
+        raise LookupError("session expired");
+    }
+    r.raise_for_status();
+    lines = [l[5:].strip() for l in r.text.splitlines() if l.startswith("data:")];
+    text = lines[-1] if lines else r.text.strip();
+    return (r, json.loads(text) if text else {});
+}
+
+"""This mandate's MCP session, opened on first use."""
+def mcp_session(m: Mandate) -> str {
+    if not m.mcp_session {
+        init = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "spending-mandate-ui", "version": "0.1"}};
+        (r, _) = mcp_post("", {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": init});
+        m.mcp_session = str(r.headers.get("mcp-session-id") or "");
+        if not m.mcp_session {
+            raise RuntimeError("MCP server returned no session id");
+        }
+        mcp_post(m.mcp_session, {"jsonrpc": "2.0", "method": "notifications/initialized"});
+    }
+    return m.mcp_session;
+}
+
+"""Call one payment tool on the MCP server. A tool returning a dict comes back as JSON text; the instructions as plain text.
+If the server restarted (free tier), the session is gone: open a new one. The server's mandate went with it, so the
+agent is told to start over from get_plan_instructions."""
+def remote_tool(m: Mandate, name: str, args: dict) -> dict {
+    body = {"jsonrpc": "2.0", "id": m.seq, "method": "tools/call", "params": {"name": name, "arguments": args}};
+    try {
+        (_, msg) = mcp_post(mcp_session(m), body);
+    } except LookupError {
+        m.mcp_session = "";
+        (_, msg) = mcp_post(mcp_session(m), body);
+    }
+    if msg.get("error") {
+        raise RuntimeError(str(msg["error"].get("message")));
+    }
+    res = msg.get("result") or {};
+    text = "".join([str(c.get("text", "")) for c in (res.get("content") or []) if c.get("type") == "text"]);
+    if res.get("isError") {
+        return {"error": text or f"{name} failed"};
+    }
+    try {
+        out = json.loads(text);
+        return out if isinstance(out, dict) else {"result": out};
+    } except ValueError {
+        return {"instructions": text} if name == "get_plan_instructions" else {"result": text};
+    }
 }
 
 """Start a helper under the same mandate. Returns a refusal, or {} once the helper is running (its summary becomes the tool result later)."""

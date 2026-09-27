@@ -17,7 +17,8 @@ node Mandate {
         created_at: float = 0.0,
         spent: float = 0.0,
         seq: int = 0,
-        helpers: int = 0;
+        helpers: int = 0,
+        mcp_session: str = "";
 
     """Append one audit event. Everything the UI shows is replayed from these."""
     def log(kind: str, agent: str, data: dict[str, any]) -> Event {
