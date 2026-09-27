@@ -6,7 +6,7 @@ import from jac.api {
     read_inbox, get_instructions, get_vendors,
     register_vendor, register_invoice, register_instruction
 }
-import from jac.pipeline { request_payment }
+import from jac.pipeline { request_payment, answer_verification }
 
 def:pub app() -> JsxElement {
     return <ClientApp />;

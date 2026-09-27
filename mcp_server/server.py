@@ -123,6 +123,21 @@ def request_payment(
     )
 
 
+@mcp.tool()
+def answer_verification(request_id: str, answers: list[dict]) -> dict:
+    """Answer the verification questions from a NEEDS_ANSWERS decision.
+
+    answers: one entry per question, e.g.
+      [{"question_id": "q1", "answer": "INV-4471"}, ...]
+    Answer every question in a single call, using facts from get_vendors(),
+    get_instructions() and read_inbox(). Answers are checked against the
+    system of record; a contradicting answer blocks the payment.
+
+    Returns the final Decision (APPROVE, ESCALATE or DENY).
+    """
+    return call_jac("answer_verification", request_id=request_id, answers=answers)
+
+
 # ---------- admin-only context registration tools ----------
 # These authenticate with ADMIN_API_KEY, never the agent key. They are only
 # registered when the server is started with --admin-tools, so an agent-facing

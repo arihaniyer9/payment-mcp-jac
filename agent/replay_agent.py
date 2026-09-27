@@ -30,7 +30,45 @@ SCENARIOS: dict[str, list[dict]] = {
            "amount": 4350.00, "invoice_id": "INV-4502"}],
     "4": [{"payee_name": "Verify Services", "account_number": "US-VRFY-424242",
            "amount": 49.00, "invoice_id": ""}],
+    # Correct account, but a $200 partial payment on the $4,200 invoice:
+    # amount is unsourced -> SOFT -> NEEDS_ANSWERS.
+    "5": [{"payee_name": "Acme Supplies", "account_number": "US-ACME-000111",
+           "amount": 4000.00, "invoice_id": "INV-4471"}],
 }
+
+# Answers the scripted agent gives to verification questions, keyed by the
+# question text's topic. "truthful" matches the seed data; "lying" contradicts it.
+ANSWER_SETS: dict[str, dict[str, str]] = {
+    "truthful": {"invoice number": "INV-4471",
+                 "full amount": "$4,200.00",
+                 "billing period": "March"},
+    "lying": {"invoice number": "INV-4471",
+              "full amount": "$4,000.00",
+              "billing period": "March"},
+}
+
+
+def answers_for(questions: list[dict], answer_set: str) -> list[dict]:
+    chosen = ANSWER_SETS[answer_set]
+    out = []
+    for q in questions:
+        text = q["text"].lower()
+        answer = next((a for key, a in chosen.items() if key in text), "")
+        out.append({"question_id": q["question_id"], "answer": answer})
+    return out
+
+
+async def run_needs_answers(prefix: str, answer_set: str = "truthful") -> dict:
+    """Scenario 5 end to end: pay, get NEEDS_ANSWERS, answer, get final decision."""
+    async def fn(session):
+        first = (await run_scenario(session, "5", prefix))[0]
+        if first.get("verdict") != "NEEDS_ANSWERS":
+            return {"first": first, "final": None, "answers": []}
+        answers = answers_for(first["questions"], answer_set)
+        final = await call_tool(session, "answer_verification", {
+            "request_id": first["request_id"], "answers": answers})
+        return {"first": first, "final": final, "answers": answers}
+    return await session_run(fn)
 
 
 def _text(result) -> str:

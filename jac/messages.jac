@@ -181,7 +181,9 @@ def summarize(pr: PaymentRequest, checks: list[CheckResult]) -> str {
         return f"Blocked {what}. " + (reasons[0] if reasons else "It failed a required safety check.");
     }
     if pr.verdict == Verdict.NEEDS_ANSWERS.value {
-        return f"Before paying {what}, we need a few quick answers to confirm the details.";
+        reasons = _first_failures(checks, "SOFT");
+        return f"Before paying {what}, we need a few quick answers to confirm the details. "
+            + (reasons[0] if reasons else "").strip();
     }
     reasons = _first_failures(checks, "SOFT");
     return f"Held {what} for a person to review. " + (reasons[0] if reasons else "")

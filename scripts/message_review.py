@@ -1,5 +1,9 @@
-"""Print the user-facing summary + failed-check user_message for scenarios 1-4
-in FULL (LLM checks off) and RULES_ONLY, for tone review."""
+"""Print the live user-facing summary + every check's user_message for a
+chosen set of runs, for tone review. LLM checks off.
+
+Usage: python scripts/message_review.py [MODE:SCENARIO ...]
+       default: FULL:1 FULL:2 FULL:4 RULES_ONLY:2
+"""
 import asyncio
 import os
 import sys
@@ -20,17 +24,19 @@ def admin(name: str, **p) -> None:
 
 
 def main() -> None:
-    for mode in ("FULL", "RULES_ONLY"):
-        for s in ("1", "2", "3", "4"):
-            admin("reset_demo")
-            admin("set_mode", mode=mode)
-            admin("set_llm_checks", enabled=False)
-            for d in asyncio.run(replay_agent.run_scenarios([s], uuid.uuid4().hex[:6]))[s]:
-                print(f"\n[{mode} scenario {s}] {d['verdict']}")
-                print(f"  summary: {d['summary']}")
-                for c in d["checks"]:
-                    if not c["passed"]:
-                        print(f"   - {c['user_message']}")
+    runs = sys.argv[1:] or ["FULL:1", "FULL:2", "FULL:4", "RULES_ONLY:2"]
+    for run in runs:
+        mode, s = run.split(":")
+        admin("reset_demo")
+        admin("set_mode", mode=mode)
+        admin("set_llm_checks", enabled=False)
+        for d in asyncio.run(replay_agent.run_scenarios([s], uuid.uuid4().hex[:6]))[s]:
+            print(f"\n[{mode} scenario {s}] {d['verdict']}")
+            print(f"  summary: {d['summary']}")
+            for c in d["checks"]:
+                mark = "PASS" if c["passed"] else "FAIL"
+                print(f"   {mark} {c['user_message']}")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":

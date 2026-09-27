@@ -58,6 +58,29 @@
   give identical stored anchor counts (`scripts/reset_stability.py`,
   `scripts/account_churn.py`).
 
+- **Known residual risk:** `clear_non_seed_context` deletes developer-registered
+  Vendor/Invoice/Instruction nodes that are not part of the seed, and the upserts
+  that follow only create a node of those types if a *seed* node is missing
+  (fresh database). On an existing database reset never creates a type it just
+  deleted. On a fresh database there is nothing to delete, so no conflict.
+
+## Demo host performance (measured 2026-09-27)
+
+- The preview sandbox pod (`JAC_SANDBOX_ID=warm-pool`) is capped at **1 vCPU**
+  (`cpu.max = 100000 100000`) on a node whose load average is ~31 on 32 cores.
+  About **20% of CPU periods are throttled** (`nr_throttled 16993 / 85259`).
+- The server itself runs `jac start --dev` (HMR file watcher + Vite/bun), using
+  ~80% of that one core under test load; idle it uses ~4%.
+- Measured: `agent_ping` 0.04 s, `get_settings` 0.1 s, but `reset_demo` ~9 s,
+  `read_inbox` 3-13 s, a full scenario (reads + payment via MCP) ~30 s.
+  `tests/test_scenarios.py` alone takes ~9.5 min.
+- **Not verified:** whether a JacHammer deployment gets more CPU or runs without
+  `--dev`. Nothing in this sandbox exposes a host-size setting. Treat the live
+  demo as at risk and keep a **pre-recorded run** as backup.
+- Likely code-side contributors (not yet optimized): every read endpoint and the
+  provenance walker scan all Evidence under root; `request_payment` scans all
+  PaymentRequests for idempotency. Fine at demo scale, O(n) per request.
+
 ## Deliberate limitations
 
 - `reset_demo` writes **no** AuditEntry (it deletes all audit entries; writing

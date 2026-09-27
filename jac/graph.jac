@@ -149,7 +149,8 @@ node CheckResult {
         severity: str,
         detail: str,
         evidence_node_ids: list[str] = [],
-        user_message: str = "";
+        user_message: str = "",
+        resolved_by: str = "";
 }
 
 """A verification question. f"expected" is NEVER sent to the agent."""

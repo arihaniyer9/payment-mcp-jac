@@ -136,9 +136,20 @@ a vendor with a new account makes the old account stop counting as trusted.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-export JAC_API_URL=http://localhost:8001 AGENT_API_KEY=... ADMIN_API_KEY=...
-.venv/bin/python -m pytest tests/ -v
+# reads keys from .env; runs one file at a time in the foreground
+bash scripts/run_tests.sh tests/test_auth.py
+bash scripts/run_tests.sh tests/test_phase1.py
+bash scripts/run_tests.sh tests/test_scenarios.py
+bash scripts/run_tests.sh tests/test_context.py
 ```
+
+On the JacHammer preview sandbox (1 vCPU, heavily shared) the scenario and
+context files each take several minutes; run them separately. Last full run
+(2026-09-27): auth 35/35, phase1 3/3, scenarios 8/8, context 14/14.
+
+Other scripts: `scripts/reset_stability.py` (5x reset, identical node/edge
+counts), `scripts/message_review.py` (prints live user-facing text per
+scenario), `scripts/scenario_matrix.py` (verdict table), `scripts/jac_percent.py`.
 
 `tests/test_auth.py` checks the `ok` contract on every response. It also checks that rejected
 admin actions **never execute**: escalation still `PENDING`, settings unchanged, and data survives an agent-key `reset_demo`.
