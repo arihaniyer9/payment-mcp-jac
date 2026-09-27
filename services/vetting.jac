@@ -17,7 +17,11 @@ import time;
 import httpx;
 import from urllib.parse { urlparse }
 import from byllm.exceptions { RateLimitError }
+import from byllm.lib { Model }
 import from services.models { PlanAttempt, PlanNode, Feeds }
+
+# Text work runs on Groq; set here so byLLM never falls back to a provider without a key.
+glob llm = Model(model_name=os.getenv("TEXT_MODEL", "groq/openai/gpt-oss-20b"));
 
 glob JEV_URL = "https://api.typesafe.ai/v1/systemone";
 glob JEV_MODEL = os.getenv("JEV_MODEL", "jev-latest");
@@ -59,10 +63,10 @@ sem MandateDraft.budget_usd = "Total budget in USD the user stated. 0 if they di
 def extract_mandate(prompt: str) -> MandateDraft by llm();
 sem extract_mandate = "Extract the spending mandate (goal and total budget) from the user's request.";
 
-"""Call a byLLM function, backing off on rate limits (~4 min total) and retrying malformed output twice."""
+"""Call a byLLM function, backing off on rate limits (~30 s total) and retrying malformed output twice."""
 def retrying(fn: object, *args: object) -> object {
     glitches = 0;
-    for attempt in range(8) {
+    for attempt in range(5) {
         try {
             return fn(*args);
         } except RateLimitError {
