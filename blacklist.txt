@@ -1,0 +1,5 @@
+# One domain per line; subdomains are blocked too.
+bit.ly
+tinyurl.com
+paypa1.com
+amaz0n.com

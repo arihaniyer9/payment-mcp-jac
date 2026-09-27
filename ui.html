@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spending mandate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #E9EEEA; --surface: #F6F8F5; --ink: #1B2A24; --muted: #5E6F67; --rule: #C4CFC8;
+    --accent: #2E6B55; --pass: #2E7D4F; --fail: #B23A2A; --hold: #9A6400;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121815; --surface: #1A221E; --ink: #E3EAE5; --muted: #95A59C; --rule: #2C3832;
+      --accent: #6BB598; --pass: #6FC193; --fail: #E0735F; --hold: #E0AE55;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--body); }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .money { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 18px 24px; border-bottom: 1px solid var(--rule); }
+  header h1 { font: 700 20px/1 var(--display); margin: 0; letter-spacing: -.01em; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  .linkish { background: none; border: 0; color: var(--accent); cursor: pointer; font-weight: 600; padding: 4px 0; }
+
+  /* ---------- first screen ---------- */
+  #intake { max-width: 640px; margin: 10vh auto 40px; padding: 0 16px; }
+  #intake h2 { font: 700 clamp(28px, 5vw, 40px)/1.1 var(--display); letter-spacing: -.02em; margin: 0 0 10px; }
+  #intake > p { color: var(--muted); margin: 0 0 20px; }
+  textarea { width: 100%; min-height: 120px; resize: vertical; padding: 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .btn { border: 0; border-radius: 8px; padding: 10px 16px; background: var(--accent); color: var(--surface); font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .err { color: var(--fail); font-size: 14px; }
+
+  .confirm { margin-top: 24px; padding: 18px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); }
+  .confirm h3 { font: 600 13px var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }
+  .confirm label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .confirm input { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+  .confirm .money-input { max-width: 180px; font-family: var(--mono); }
+
+  /* ---------- console ---------- */
+  #console { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); min-height: calc(100vh - 62px); }
+  #timeline-wrap { display: flex; flex-direction: column; border-right: 1px solid var(--rule); min-width: 0; }
+  #timeline { flex: 1; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 62ch; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: var(--surface); padding: 10px 14px; border-radius: 12px 12px 2px 12px; }
+  .msg.agent { background: var(--surface); padding: 12px 14px; border-radius: 12px 12px 12px 2px; border: 1px solid var(--rule); }
+  .msg.agent p { margin: 0 0 6px; } .msg.agent p:last-child { margin: 0; }
+  .step { display: grid; grid-template-columns: 18px 1fr; gap: 10px; font-size: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--rule); }
+  .step.ok .dot { background: var(--pass); } .step.bad .dot { background: var(--fail); } .step.wait .dot { background: var(--hold); animation: pulse 1.2s infinite; }
+  .step b { font-weight: 600; }
+  .step ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .step li { margin: 2px 0; }
+  .step .sum { margin-top: 6px; color: var(--muted); white-space: pre-wrap; }
+  .step.error { color: var(--fail); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .step.wait .dot { animation: none; } }
+  #working { padding: 0 24px 8px; color: var(--muted); font-size: 13px; min-height: 22px; }
+  #reply { display: flex; gap: 8px; padding: 12px 24px 20px; border-top: 1px solid var(--rule); }
+  #reply input { flex: 1; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); min-width: 0; }
+
+  /* ---------- ledger ---------- */
+  #ledger { padding: 20px 24px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; }
+  .eyebrow { font: 600 12px var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
+  #goal-text { font: 500 22px/1.2 var(--display); margin: 0 0 18px; letter-spacing: -.01em; }
+  .budget { position: relative; overflow: hidden; border: 1px solid var(--rule); border-radius: 12px; padding: 16px; background: var(--surface); }
+  .budget svg.guilloche { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .budget > * { position: relative; }
+  .budget-figure { font: 500 34px/1 var(--mono); letter-spacing: -.02em; margin: 2px 0 12px; }
+  .meter { height: 10px; border-radius: 5px; background: var(--paper); overflow: hidden; display: flex; border: 1px solid var(--rule); }
+  .meter .spent { background: var(--accent); }
+  .meter .planned { background: repeating-linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 6px); opacity: .55; }
+  .meter-key { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  .plan-head { display: flex; justify-content: space-between; align-items: baseline; margin: 26px 0 8px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+  .badge.accepted { color: var(--pass); } .badge.rejected { color: var(--fail); } .badge.checking { color: var(--hold); }
+  .tree { list-style: none; margin: 0; padding: 0; }
+  .tree .tree { padding-left: 16px; border-left: 1px dashed var(--rule); margin-left: 6px; }
+  .line { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+  .line.goal { font-weight: 600; } .line.subgoal { font-weight: 500; }
+  .line .tag { font-size: 11px; font-weight: 600; margin-left: 6px; }
+  .tag.bought { color: var(--pass); } .tag.blocked { color: var(--fail); }
+  .empty { color: var(--muted); font-size: 14px; border: 1px dashed var(--rule); border-radius: 10px; padding: 14px; }
+
+  @media (max-width: 860px) {
+    #console { grid-template-columns: 1fr; }
+    #ledger { position: static; max-height: none; order: -1; border-bottom: 1px solid var(--rule); padding: 16px; }
+    #timeline-wrap { border-right: 0; }
+    #timeline, #reply, #working { padding-left: 16px; padding-right: 16px; }
+    header { padding: 14px 16px; }
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Spending mandate</h1>
+    <p>An agent plans and buys for you. Every plan and payment is checked before money moves.</p>
+  </div>
+  <button class="linkish" id="new" hidden>New mandate</button>
+</header>
+
+<main id="intake">
+  <h2>What should the agent get done?</h2>
+  <p>Describe the goal and include a total budget. You’ll confirm both before anything happens.</p>
+  <label for="prompt" class="hint">Your request</label>
+  <textarea id="prompt" placeholder="Throw a dinosaur-themed backyard party for my 8 year old, about 10 kids. Pizza is handled. Keep it under $150."></textarea>
+  <div class="row">
+    <button class="btn" id="read">Read goal and budget</button>
+    <span class="err" id="intake-err" role="alert"></span>
+  </div>
+  <section class="confirm" id="confirm" hidden>
+    <h3>Confirm the mandate</h3>
+    <label>Goal <input id="goal"></label>
+    <label>Budget (USD) <input id="budget" class="money-input" inputmode="decimal"></label>
+    <div class="row">
+      <button class="btn" id="start">Start agent</button>
+      <span class="hint">The agent can’t change these.</span>
+    </div>
+  </section>
+</main>
+
+<div id="console" hidden>
+  <section id="timeline-wrap" aria-label="Agent activity">
+    <div id="timeline" aria-live="polite"></div>
+    <div id="working"></div>
+    <form id="reply">
+      <input id="reply-text" placeholder="Reply to the agent" aria-label="Reply to the agent" disabled>
+      <button class="btn" id="send" disabled>Send</button>
+    </form>
+  </section>
+  <aside id="ledger" aria-label="Mandate and plan">
+    <p class="eyebrow">Goal</p>
+    <p id="goal-text"></p>
+    <div class="budget">
+      <svg class="guilloche" id="guilloche" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <p class="eyebrow">Budget</p>
+      <div class="budget-figure money" id="budget-figure"></div>
+      <div class="meter" role="img" id="meter"><div class="spent" id="m-spent"></div><div class="planned" id="m-planned"></div></div>
+      <div class="meter-key"><span id="k-spent"></span><span id="k-planned"></span><span id="k-left"></span></div>
+    </div>
+    <div class="plan-head"><p class="eyebrow">Plan</p><span id="plan-badge"></span></div>
+    <div id="plan"><p class="empty">No plan yet. The agent submits one after reading the planning rules.</p></div>
+  </aside>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const usd = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const state = { prompt: '', budget: 0, plan: null, planStatus: null, spent: 0, buys: {}, pending: {}, busy: false };
+
+// ---------- banknote guilloche behind the budget figure ----------
+(function guilloche() {
+  const svg = $('guilloche'), W = 400, H = 160;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  let d = '';
+  for (let k = 0; k < 14; k++) {
+    let p = '';
+    for (let x = 0; x <= W; x += 4) {
+      const y = H / 2 + Math.sin(x / 26 + k * .45) * (28 + k * 2.2) * Math.cos(x / 97 - k * .2);
+      p += (x ? 'L' : 'M') + x + ' ' + y.toFixed(1);
+    }
+    d += `<path d="${p}" fill="none" stroke="var(--accent)" stroke-width=".6" opacity=".16"/>`;
+  }
+  svg.innerHTML = d;
+})();
+
+// ---------- intake ----------
+async function postJSON(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Request failed (${res.status})`);
+  return res;
+}
+
+$('read').onclick = async () => {
+  $('intake-err').textContent = '';
+  state.prompt = $('prompt').value.trim();
+  if (!state.prompt) { $('intake-err').textContent = 'Write what you want done, with a budget.'; return; }
+  $('read').disabled = true; $('read').textContent = 'Reading…';
+  try {
+    const m = await (await postJSON('/mandate', { prompt: state.prompt })).json();
+    $('goal').value = m.goal;
+    $('budget').value = m.budget ?? '';
+    $('confirm').hidden = false;
+    (m.budget ? $('start') : $('budget')).focus();
+    if (!m.budget) $('intake-err').textContent = 'No budget found in your request. Enter one below.';
+  } catch (e) { $('intake-err').textContent = e.message; }
+  $('read').disabled = false; $('read').textContent = 'Read goal and budget';
+};
+
+$('start').onclick = () => {
+  const goal = $('goal').value.trim(), budget = parseFloat($('budget').value.replace(/[$,]/g, ''));
+  if (!goal || !(budget > 0)) { $('intake-err').textContent = 'Enter a goal and a budget above $0.'; return; }
+  state.budget = Math.round(budget * 100) / 100;
+  $('intake').hidden = true; $('console').hidden = false; $('new').hidden = false;
+  $('goal-text').textContent = goal;
+  renderLedger();
+  addMsg('user', state.prompt);
+  run('/start', { prompt: state.prompt, goal, budget: state.budget });
+};
+
+$('new').onclick = () => location.reload();
+
+$('reply').onsubmit = e => {
+  e.preventDefault();
+  const text = $('reply-text').value.trim();
+  if (!text || state.busy) return;
+  $('reply-text').value = '';
+  addMsg('user', text);
+  run('/say', { text });
+};
+
+// ---------- streaming ----------
+async function run(url, body) {
+  setBusy(true);
+  try {
+    const res = await postJSON(url, body);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (line.trim()) handle(JSON.parse(line));
+      }
+    }
+  } catch (e) { addStep('error', 'Connection problem', esc(e.message)); }
+  setBusy(false);
+}
+
+function setBusy(b) {
+  state.busy = b;
+  $('reply-text').disabled = $('send').disabled = b;
+  $('working').textContent = b ? 'Agent working… On the free Groq tier this can pause for a minute between steps.' : '';
+  if (!b) $('reply-text').focus();
+}
+
+function handle(ev) {
+  if (ev.type === 'assistant') addMsg('agent', ev.text);
+  else if (ev.type === 'error') addStep('error', 'Something stopped the agent', esc(ev.text).slice(0, 400));
+  else if (ev.type === 'tool_call') onCall(ev);
+  else if (ev.type === 'tool_result') onResult(ev);
+}
+
+function onCall({ id, name, args }) {
+  if (name === 'get_plan_instructions') state.pending[id] = addStep('wait', 'Reading the planning rules');
+  else if (name === 'submit_plan') {
+    state.plan = args; state.planStatus = 'checking'; renderLedger();
+    const items = (args.nodes || []).filter(n => n.kind === 'item');
+    const goal = (args.nodes || []).find(n => n.kind === 'goal');
+    state.pending[id] = addStep('wait', `Plan submitted for review: ${items.length} items, ${goal ? usd(goal.price) : 'no total'}`);
+  } else if (name === 'purchase') {
+    state.buys[args.node_id] = { status: 'checking' }; renderLedger();
+    let host = args.payment_url; try { host = new URL(args.payment_url).host; } catch {}
+    state.pending[id] = addStep('wait', `Buying ${esc(args.item_name)} for <span class="money">${usd(args.price)}</span> at ${esc(host)}`);
+    state.pending[id].args = args;
+  } else state.pending[id] = addStep('wait', `Calling ${esc(name)}`);
+}
+
+function onResult({ id, name, result, is_error }) {
+  const el = state.pending[id]; delete state.pending[id];
+  const r = typeof result === 'object' && result ? result : { error: String(result) };
+  const fails = (r.findings || []).filter(f => !f.ok);
+  const failList = fails.length ? '<ul>' + fails.map(f => `<li><b>${esc(f.check)}:</b> ${esc(f.reason)}</li>`).join('') + '</ul>' : '';
+  if (name === 'get_plan_instructions') return settle(el, is_error ? 'bad' : 'ok', 'Read the planning rules');
+  if (name === 'submit_plan') {
+    state.planStatus = r.accepted ? 'accepted' : 'rejected'; renderLedger();
+    return settle(el, r.accepted ? 'ok' : 'bad', r.accepted ? 'Plan accepted' : `Plan rejected: ${fails.length} problem${fails.length === 1 ? '' : 's'}`,
+      failList + (r.summary ? `<div class="sum">${esc(r.summary)}</div>` : ''));
+  }
+  if (name === 'purchase') {
+    const a = el.args;
+    if (r.approved) {
+      state.buys[a.node_id] = { status: 'bought', price: a.price }; state.spent = r.spent;
+      settle(el, 'ok', `Paid ${esc(a.item_name)}: <span class="money">${usd(a.price)}</span> authorized`, `<div class="sum">Stripe ${esc(r.payment_intent)} · ${usd(r.remaining)} left</div>`);
+    } else {
+      state.buys[a.node_id] = { status: 'blocked' };
+      settle(el, 'bad', `Blocked ${esc(a.item_name)}`, (r.error ? `<div class="sum">${esc(r.error)}</div>` : '') + failList);
+    }
+    return renderLedger();
+  }
+  settle(el, is_error ? 'bad' : 'ok', `${esc(name)} finished`);
+}
+
+// ---------- timeline ----------
+function addMsg(who, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.innerHTML = who === 'agent' ? md(text) : esc(text);
+  $('timeline').appendChild(d); d.scrollIntoView({ block: 'end', behavior: 'smooth' });
+}
+function addStep(kind, title, body = '') {
+  const d = document.createElement('div');
+  d.className = 'step ' + kind;
+  d.innerHTML = `<span class="dot" aria-hidden="true"></span><div><b>${title}</b>${body ? `<div>${body}</div>` : ''}</div>`;
+  $('timeline').appendChild(d); d.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  return d;
+}
+function settle(el, kind, title, body = '') {
+  el.className = 'step ' + kind;
+  el.querySelector('div').innerHTML = `<b>${title}</b>${body}`;
+}
+// minimal markdown: paragraphs, bullets, bold, inline code
+function md(text) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  return text.split(/\n{2,}/).map(block => {
+    const lines = block.split('\n');
+    if (lines.every(l => /^\s*([-*]|\d+\.)\s/.test(l))) return '<ul>' + lines.map(l => `<li>${inline(l.replace(/^\s*([-*]|\d+\.)\s/, ''))}</li>`).join('') + '</ul>';
+    return `<p>${lines.map(inline).join('<br>')}</p>`;
+  }).join('');
+}
+
+// ---------- ledger ----------
+function renderLedger() {
+  const goal = state.plan?.nodes?.find(n => n.kind === 'goal');
+  const planned = Math.max(0, (goal?.price || 0) - state.spent);
+  const pct = v => Math.min(100, (v / state.budget) * 100) + '%';
+  $('budget-figure').textContent = usd(state.budget);
+  $('m-spent').style.width = pct(state.spent);
+  $('m-planned').style.width = pct(Math.min(planned, state.budget - state.spent));
+  $('k-spent').textContent = `${usd(state.spent)} authorized`;
+  $('k-planned').textContent = goal ? `${usd(goal.price)} planned` : 'nothing planned';
+  $('k-left').textContent = `${usd(state.budget - state.spent)} left`;
+  $('meter').setAttribute('aria-label', `${usd(state.spent)} authorized of ${usd(state.budget)}`);
+
+  const badge = { accepted: 'Accepted', rejected: 'Rejected', checking: 'Checking…' }[state.planStatus];
+  $('plan-badge').innerHTML = badge ? `<span class="badge ${state.planStatus}">${badge}</span>` : '';
+  if (!state.plan?.nodes?.length) return;
+
+  const byId = Object.fromEntries(state.plan.nodes.map(n => [n.id, n]));
+  const kids = {};
+  for (const e of state.plan.edges || []) (kids[e.parent] ||= []).push(e.child);
+  const seen = new Set();
+  const branch = id => {
+    const n = byId[id];
+    if (!n || seen.has(id)) return '';
+    seen.add(id);
+    const b = state.buys[id];
+    const tag = b?.status === 'bought' ? '<span class="tag bought">bought</span>' : b?.status === 'blocked' ? '<span class="tag blocked">blocked</span>' : '';
+    const sub = (kids[id] || []).map(branch).join('');
+    return `<li><div class="line ${esc(n.kind)}"><span>${esc(n.name)}${tag}</span><span class="money">${usd(n.price)}</span></div>${sub ? `<ul class="tree">${sub}</ul>` : ''}</li>`;
+  };
+  const roots = state.plan.nodes.filter(n => n.kind === 'goal').map(n => branch(n.id)).join('');
+  const orphans = state.plan.nodes.filter(n => !seen.has(n.id)).map(n => branch(n.id)).join('');
+  $('plan').innerHTML = `<ul class="tree">${roots}${orphans}</ul>`;
+}
+</script>
+</body>
+</html>
