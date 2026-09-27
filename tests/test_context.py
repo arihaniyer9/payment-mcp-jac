@@ -28,8 +28,8 @@ JARGON = re.compile(
     r"normaliz\w*|UNSOURCED|UNTRUSTED_ONLY)\b", re.IGNORECASE)
 
 
-def call(name: str, key: str, **payload) -> dict:
-    r = httpx.post(f"{BASE_URL}/function/{name}", json={"api_key": key, **payload},
+def call(_endpoint: str, _key: str, /, **payload) -> dict:
+    r = httpx.post(f"{BASE_URL}/function/{_endpoint}", json={"api_key": _key, **payload},
                    timeout=60).json()
     return r["data"]["result"]
 
