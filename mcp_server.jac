@@ -15,12 +15,17 @@ import from services.vetting { money, extract_mandate, retrying }
 
 glob mcp = MCPServer("plan-graph-payments");
 # ponytail: one mandate per client session, kept for the process lifetime; evict old sessions if memory matters.
-glob mandates: dict[int, Mandate] = {};
+glob mandates: dict[str, Mandate] = {};
 glob NO_GOAL = {"ok": False, "error": "No goal yet. Call get_plan_instructions with the user's request first."};
+
+"""The client's MCP session id over HTTP; stdio has one client, so one key."""
+def key(ctx: Context) -> str {
+    return (ctx.headers or {}).get("mcp-session-id") or "stdio";
+}
 
 """This session's mandate, once get_plan_instructions has set its goal. Kept in the graph as an audit trail."""
 def current(ctx: Context) -> Mandate | None {
-    return mandates.get(id(ctx.session));
+    return mandates.get(key(ctx));
 }
 
 def logged(m: Mandate, name: str, args: dict, result: dict) -> dict {
@@ -40,7 +45,7 @@ def get_plan_instructions(request: str, ctx: Context) -> str {
         }
         m = Mandate(goal=draft.goal, budget=money(draft.budget_usd), request=request, created_at=time.time());
         root ++> m;
-        mandates[id(ctx.session)] = m;
+        mandates[key(ctx)] = m;
     }
     return plan_instructions(m);
 }
