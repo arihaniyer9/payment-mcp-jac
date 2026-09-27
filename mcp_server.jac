@@ -1,17 +1,17 @@
 """MCP server for any MCP client (Claude Code, Cursor, ...): the same vetting as the web app.
 
-The goal comes from the user's prompt, which the agent passes to get_plan_instructions once per session.
-BUDGET comes from the server's environment, never from the agent.
+The goal and budget come from the user's prompt, which the agent passes to get_plan_instructions once per session.
+Both are fixed for the session after that first call.
 As in the web app, a purchase page must load when the server fetches it, and the price must be listed on it.
 
-Run: BUDGET=100 jac run mcp_server.jac
+Run: jac run mcp_server.jac
 """
 import os;
 import time;
 import from mcp.server.mcpserver { MCPServer, Context }
 import from services.models { Mandate }
 import from services.tools { plan_instructions, submit_plan as vet_submitted_plan, purchase as vet_and_buy }
-import from services.vetting { money, num, extract_mandate, retrying }
+import from services.vetting { money, extract_mandate, retrying }
 
 glob mcp = MCPServer("plan-graph-payments");
 # ponytail: one mandate per client session, kept for the process lifetime; evict old sessions if memory matters.
@@ -29,13 +29,16 @@ def logged(m: Mandate, name: str, args: dict, result: dict) -> dict {
 }
 
 """Step 1. Pass the user's request verbatim (their own words: what they want and why). Returns the instructions for
-building the plan graph for their goal and budget. The goal is fixed for the session after the first call."""
+building the plan graph for their goal and budget. The request must state a budget. Goal and budget are fixed for the session after the first call."""
 @mcp.tool()
 def get_plan_instructions(request: str, ctx: Context) -> str {
     m = current(ctx);
     if m is None {
-        goal = retrying(extract_mandate, request).goal;
-        m = Mandate(goal=goal, budget=money(num(os.environ["BUDGET"])), request=request, created_at=time.time());
+        draft = retrying(extract_mandate, request);
+        if draft.budget_usd <= 0 {
+            return "No budget found in the request. Ask the user for their total budget in USD, then call again with it included.";
+        }
+        m = Mandate(goal=draft.goal, budget=money(draft.budget_usd), request=request, created_at=time.time());
         root ++> m;
         mandates[id(ctx.session)] = m;
     }
@@ -65,7 +68,6 @@ def purchase(node_id: str, item_name: str, payment_url: str, price: float, ctx: 
 }
 
 with entry:__main__ {
-    _ = money(num(os.environ["BUDGET"]));  # fail at startup, not mid-session, if BUDGET is missing
     # Hosts like Render set PORT: serve streamable HTTP at /mcp. Otherwise stdio for local clients.
     if os.getenv("PORT") {
         mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ["PORT"]));
