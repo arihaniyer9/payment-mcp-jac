@@ -81,6 +81,26 @@
   provenance walker scan all Evidence under root; `request_payment` scans all
   PaymentRequests for idempotency. Fine at demo scale, O(n) per request.
 
+## Phase 3 status (2026-09-27, in progress)
+
+- Wired: `intent_check` (by llm, instruction read from graph by id), interrogator
+  (templated questions, expected answers server-side only), judge (deterministic
+  for invoice id/amount, LLM only for free-text period), `answer_verification`
+  endpoint + MCP tool, scenario 5 in the replay agent, `tests/test_phase3.py`,
+  `scripts/reliability.py`.
+- Regression hit and fixed: adding `CheckResult.resolved_by` made old persisted
+  CheckResults fail with `'CheckResult' object has no attribute 'resolved_by'`
+  (schema migration did not backfill the default on those loaded objects).
+  Fixed with `getattr(c, "resolved_by", "")`. Lesson: when adding a field that is
+  read across existing nodes, read it defensively.
+- Reliability so far (LLM checks ON, gpt-oss-120b, temp 0):
+  - Scenario 4: **10/10** DENY with intent UNRELATED.
+  - Scenario 3: **2/4**. Failure mode: INV-4471 (the authorized March invoice)
+    also classified EXCEEDS_SCOPE, so it ESCALATEs instead of APPROVE. INV-4502
+    was correctly EXCEEDS_SCOPE in 4/4. Not yet fixed: next step is tightening
+    the MATCHES/EXCEEDS_SCOPE sem strings, then a stronger model via LLM_MODEL.
+- Not yet run: `tests/test_phase3.py`, scenario 5 end to end.
+
 ## Deliberate limitations
 
 - `reset_demo` writes **no** AuditEntry (it deletes all audit entries; writing
