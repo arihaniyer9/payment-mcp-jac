@@ -20,10 +20,11 @@ import from services.tools { plan_instructions, submit_plan, purchase }
 import from services.browser { web_search, open_page, click, type_text, scroll }
 import from services.vetting { num }
 
-# Groq directly (OpenAI-compatible), so we get the agent's reasoning. Browsing is our own visible Chrome (browser.jac).
-glob GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-glob AGENT_MODEL = os.getenv("AGENT_MODEL", "openai/gpt-oss-120b");
-glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openai/gpt-oss-20b");  # separate daily quota
+# OpenRouter (OpenAI-compatible) with free tool-calling models; it falls back between them itself.
+# Browsing is our own visible Chrome (browser.jac).
+glob LLM_URL = "https://openrouter.ai/api/v1/chat/completions";
+glob AGENT_MODEL = os.getenv("AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free");
+glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "nvidia/nemotron-3-super-120b-a12b:free");
 glob MAX_STEPS = 80;
 glob MAX_HELPERS = 2;
 
@@ -239,32 +240,26 @@ def parse_args(call: dict) -> dict {
     }
 }
 
-"""One agent step. Short rate-limit waits are waited out; a used-up daily quota moves to the fallback model.
-Long waits raise, so one step never blocks the server for minutes. Malformed tool calls retry with the error as a hint."""
+"""One agent step. Short rate-limit waits are waited out; long ones raise, so one step never blocks the
+server for minutes. Transient provider errors retry. Malformed tool calls retry with the error as a hint."""
 def complete(messages: list[dict], tools: list[dict]) -> dict {
     hint: list[dict] = [];
-    models = [AGENT_MODEL, FALLBACK_MODEL];
     for _ in range(8) {
         r = httpx.post(
-            GROQ_URL,
-            headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
-            json={"model": models[0], "messages": compact(messages) + hint, "tools": tools},
+            LLM_URL,
+            headers={"Authorization": f"Bearer {os.environ['OPEN_ROUTER_API_KEY']}"},
+            json={"models": [AGENT_MODEL, FALLBACK_MODEL], "messages": compact(messages) + hint, "tools": tools},
             timeout=120
         );
         if r.status_code == 429 {
             pause = num(r.headers.get("retry-after", "5"));
-            if "per day" in r.text and len(models) > 1 {
-                models = models[1:];
-                continue;
-            }
             if pause > 20 {
-                raise RuntimeError(f"Groq rate limit on {models[0]}: try again in {round(pause)} s.");
+                raise RuntimeError(f"OpenRouter rate limit: try again in {round(pause)} s.");
             }
             time.sleep(pause + 0.5);
             continue;
         }
         if r.status_code >= 500 {
-            # Groq's browsing tool fails transiently; the same request usually works on retry.
             time.sleep(1);
             continue;
         }
@@ -274,12 +269,12 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
             hint = [{"role": "user", "content": f"Your last tool call was rejected: {err.get('message')}. Call the tool again with every required field."}];
             continue;
         }
-        if r.status_code >= 400 {
+        if r.status_code >= 400 or not body.get("choices") {
             raise RuntimeError(str(err.get("message") or r.text[:300]));
         }
         return body["choices"][0]["message"] as dict;
     }
-    raise RuntimeError("Groq kept rate-limiting or rejecting tool calls; try again in a minute.");
+    raise RuntimeError("OpenRouter kept rate-limiting or failing; try again in a minute.");
 }
 
 """Only the last two page observations go back to the model in full; older ones shrink to their URL.

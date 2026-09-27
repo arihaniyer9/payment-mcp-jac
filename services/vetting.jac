@@ -18,10 +18,18 @@ import httpx;
 import from urllib.parse { urlparse }
 import from byllm.exceptions { RateLimitError }
 import from byllm.lib { Model }
+import from dotenv { load_dotenv }
+import from pathlib { Path }
 import from services.models { PlanAttempt, PlanNode, Feeds }
 
-# Text work runs on Groq; set here so byLLM never falls back to a provider without a key.
-glob llm = Model(model_name=os.getenv("TEXT_MODEL", "groq/openai/gpt-oss-20b"));
+with entry {
+    load_dotenv(str(Path(__file__ or ".").resolve().parent.parent / ".env"));
+    # LiteLLM (under byLLM) reads OPENROUTER_API_KEY; the project's .env names it OPEN_ROUTER_API_KEY.
+    os.environ.setdefault("OPENROUTER_API_KEY", os.environ.get("OPEN_ROUTER_API_KEY", ""));
+}
+
+# Text work runs on a free OpenRouter model; set here so byLLM never falls back to a provider without a key.
+glob llm = Model(model_name=os.getenv("TEXT_MODEL", "openrouter/nvidia/nemotron-3-super-120b-a12b:free"));
 
 glob JEV_URL = "https://api.typesafe.ai/v1/systemone";
 glob JEV_MODEL = os.getenv("JEV_MODEL", "jev-latest");
