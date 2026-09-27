@@ -55,5 +55,10 @@ def purchase(node_id: str, item_name: str, payment_url: str, price: float) -> di
 
 with entry:__main__ {
     _ = current();
-    mcp.run();
+    # Hosts like Render set PORT: serve streamable HTTP at /mcp. Otherwise stdio for local clients.
+    if os.getenv("PORT") {
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ["PORT"]));
+    } else {
+        mcp.run();
+    }
 }
