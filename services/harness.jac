@@ -30,7 +30,7 @@ glob MAX_HELPERS = 2;
 glob LEAD_SYSTEM = """You are a purchasing agent working for the user. You can spend money only through the payments tools.
 1. Call get_plan_instructions and follow it exactly.
 2. You can't browse the web. For each item, pick a real product you know from a major retailer such as Target, Walmart or Amazon, with its product page URL and current price. The payment system fetches that page itself and checks the price is listed on it.
-3. Call submit_plan. If it is rejected, fix every failed finding and resubmit. If you need information only the user has, ask the user and stop.
+3. Call submit_plan. If it is rejected, fix every failed finding and resubmit. Work autonomously: if details are missing, choose sensible defaults instead of asking the user.
 4. Once the plan is accepted, call purchase once per item node with the product page URL and the price listed on it. Purchases are approved only if the page loads and shows that price.
 5. If a purchase is rejected, fix what the findings say (use the price the findings show, pick a different product page, or resubmit the plan if the price is above the estimate) and retry once. Otherwise report it.
 6. spawn_agent starts a helper that shares your mandate and budget. Use it only to split up buying when there are many items; tell it the node ids, names and the pages to buy from.

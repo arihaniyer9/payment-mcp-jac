@@ -33,8 +33,9 @@ Example shape (a different goal):
 }
 ```
 
-If you are missing information needed to plan (sizes, preferences, dates, quantities), ask the user before submitting.
-Do not guess.
+Work autonomously: do not stop to ask the user questions or for confirmation. The user's request is your full mandate.
+If details are missing (sizes, preferences, dates, quantities), pick sensible defaults that fit the goal and budget, and proceed.
 
 When the plan is accepted, buy each item with `purchase`. If an item costs more than its estimate,
 update the estimate (and the sums above it), resubmit the plan, then buy it.
+Keep going until every item is bought, then report what you bought and any assumptions you made.

@@ -13,7 +13,10 @@ import from services.models { Mandate }
 import from services.tools { plan_instructions, submit_plan as vet_submitted_plan, purchase as vet_and_buy }
 import from services.vetting { money, extract_mandate, retrying }
 
-glob mcp = MCPServer("plan-graph-payments");
+glob mcp = MCPServer(
+    "plan-graph-payments",
+    instructions="These tools are for an autonomous purchasing agent. Once the user has given a goal and budget, plan and buy without asking the user for confirmation or more details: choose sensible defaults for anything unstated. The server vets every plan and purchase against the user's mandate, so that is the safety check, not the user. Only a missing budget needs the user.",
+);
 # ponytail: one mandate per client session, kept for the process lifetime; evict old sessions if memory matters.
 glob mandates: dict[str, Mandate] = {};
 glob NO_GOAL = {"ok": False, "error": "No goal yet. Call get_plan_instructions with the user's request first."};
@@ -34,7 +37,8 @@ def logged(m: Mandate, name: str, args: dict, result: dict) -> dict {
 }
 
 """Step 1. Pass the user's request verbatim (their own words: what they want and why). Returns the instructions for
-building the plan graph for their goal and budget. The request must state a budget. Goal and budget are fixed for the session after the first call."""
+building the plan graph for their goal and budget. The request must state a budget. Goal and budget are fixed for the session after the first call.
+Then carry out the instructions autonomously, without asking the user to confirm."""
 @mcp.tool()
 def get_plan_instructions(request: str, ctx: Context) -> str {
     m = current(ctx);
@@ -51,7 +55,7 @@ def get_plan_instructions(request: str, ctx: Context) -> str {
 }
 
 """Step 2. Submit the plan graph for vetting. nodes: [{id, kind: item|subgoal|goal, name, price}], edges: [{child, parent}].
-On rejection, fix the findings and resubmit. Resubmitting also replaces an accepted plan, e.g. when an item price was underestimated."""
+On rejection, fix the findings and resubmit, without asking the user. Resubmitting also replaces an accepted plan, e.g. when an item price was underestimated."""
 @mcp.tool()
 def submit_plan(nodes: list[dict], edges: list[dict], ctx: Context) -> dict {
     m = current(ctx);
@@ -61,7 +65,8 @@ def submit_plan(nodes: list[dict], edges: list[dict], ctx: Context) -> dict {
     return logged(m, "submit_plan", {"nodes": nodes, "edges": edges}, vet_submitted_plan(m, nodes, edges));
 }
 
-"""Step 3. Request payment for one item node of the accepted plan. price is the USD price listed at payment_url."""
+"""Step 3. Request payment for one item node of the accepted plan. price is the USD price listed at payment_url.
+Buy every item without asking the user to confirm: the server vets each purchase."""
 @mcp.tool()
 def purchase(node_id: str, item_name: str, payment_url: str, price: float, ctx: Context) -> dict {
     m = current(ctx);
