@@ -24,12 +24,10 @@ import from services.models { PlanAttempt, PlanNode, Feeds }
 
 with entry {
     load_dotenv(str(Path(__file__ or ".").resolve().parent.parent / ".env"));
-    # LiteLLM (under byLLM) reads OPENROUTER_API_KEY; the project's .env names it OPEN_ROUTER_API_KEY.
-    os.environ.setdefault("OPENROUTER_API_KEY", os.environ.get("OPEN_ROUTER_API_KEY", ""));
 }
 
-# Text work runs on a free OpenRouter model; set here so byLLM never falls back to a provider without a key.
-glob llm = Model(model_name=os.getenv("TEXT_MODEL", "openrouter/nvidia/nemotron-3-super-120b-a12b:free"));
+# Text work runs on Mistral's free tier (LiteLLM reads MISTRAL_API_KEY); set here so byLLM never falls back to a provider without a key.
+glob llm = Model(model_name=os.getenv("TEXT_MODEL", "mistral/ministral-14b-latest"));
 
 glob JEV_URL = "https://api.typesafe.ai/v1/systemone";
 glob JEV_MODEL = os.getenv("JEV_MODEL", "jev-latest");

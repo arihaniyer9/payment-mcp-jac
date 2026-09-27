@@ -1,4 +1,4 @@
-"""The agent harness: an OpenRouter model with the payment tools, driven one step at a time.
+"""The agent harness: a Mistral model with the payment tools, driven one step at a time.
 
 Every step is one short, committed unit of work on the Mandate subgraph, so the conversation,
 pending tool calls and helper agents all live in the graph and survive a page reload:
@@ -19,10 +19,11 @@ import from services.models { Mandate, AgentRun, Spawned, Event }
 import from services.tools { plan_instructions, submit_plan, purchase }
 import from services.vetting { num }
 
-# OpenRouter (OpenAI-compatible) with free tool-calling models; it falls back between them itself.
-glob LLM_URL = "https://openrouter.ai/api/v1/chat/completions";
-glob AGENT_MODEL = os.getenv("AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free");
-glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "nvidia/nemotron-3-super-120b-a12b:free");
+# Mistral's API (OpenAI-compatible chat + tools). Codestral follows the tool protocol best on the free tier;
+# Ministral 14B takes over when Codestral is rate-limited.
+glob LLM_URL = "https://api.mistral.ai/v1/chat/completions";
+glob AGENT_MODEL = os.getenv("AGENT_MODEL", "codestral-latest");
+glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "ministral-14b-latest");
 glob MAX_STEPS = 80;
 glob MAX_HELPERS = 2;
 
@@ -217,23 +218,25 @@ def parse_args(call: dict) -> dict {
     }
 }
 
-"""One agent step. Short rate-limit waits are waited out; long ones raise, so one step never blocks the
-server for minutes. Transient provider errors retry. Malformed tool calls retry with the error as a hint."""
+"""One agent step. A rate-limited model hands over to the fallback; short waits are waited out, long ones
+raise, so one step never blocks the server for minutes. Transient provider errors retry."""
 def complete(messages: list[dict], tools: list[dict]) -> dict {
-    hint: list[dict] = [];
+    models = [AGENT_MODEL, FALLBACK_MODEL];
+    turn = 0;
     for _ in range(8) {
         r = httpx.post(
             LLM_URL,
-            headers={"Authorization": f"Bearer {os.environ['OPEN_ROUTER_API_KEY']}"},
-            json={"models": [AGENT_MODEL, FALLBACK_MODEL], "messages": messages + hint, "tools": tools},
+            headers={"Authorization": f"Bearer {os.environ['MISTRAL_API_KEY']}"},
+            json={"model": models[turn % 2], "messages": messages, "tools": tools},
             timeout=120
         );
         if r.status_code == 429 {
-            pause = num(r.headers.get("retry-after", "5"));
+            turn += 1;
+            pause = num(r.headers.get("retry-after", "2"));
             if pause > 20 {
-                raise RuntimeError(f"OpenRouter rate limit: try again in {round(pause)} s.");
+                raise RuntimeError(f"Mistral rate limit: try again in {round(pause)} s.");
             }
-            time.sleep(pause + 0.5);
+            time.sleep(pause);
             continue;
         }
         if r.status_code >= 500 {
@@ -241,17 +244,12 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
             continue;
         }
         body = r.json() as dict;
-        err = (body.get("error") or {}) as dict;
-        if err.get("code") == "tool_use_failed" {
-            hint = [{"role": "user", "content": f"Your last tool call was rejected: {err.get('message')}. Call the tool again with every required field."}];
-            continue;
-        }
         if r.status_code >= 400 or not body.get("choices") {
-            raise RuntimeError(str(err.get("message") or r.text[:300]));
+            raise RuntimeError(str(body.get("message") or r.text[:300]));
         }
         return body["choices"][0]["message"] as dict;
     }
-    raise RuntimeError("OpenRouter kept rate-limiting or failing; try again in a minute.");
+    raise RuntimeError("Mistral kept rate-limiting or failing; try again in a minute.");
 }
 
 # ---------------------------------------------------------------- one tool call
