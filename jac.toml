@@ -1,0 +1,39 @@
+[project]
+name = "spending-mandate"
+version = "0.1.0"
+description = "Agents spend money only after their plan and every purchase pass fixed rules, provenance checks and AI judges."
+entry-point = "main.jac"
+
+[dependencies]
+stripe = "~=15.6"
+httpx = ">=0.27"
+python-dotenv = ">=1.0"
+mcp = ">=2.2"
+
+[dependencies.npm]
+react = "^18.2.0"
+react-dom = "^18.2.0"
+react-router-dom = "^6.22.0"
+react-error-boundary = "^5.0.0"
+react-hook-form = "^7.71.0"
+"@hookform/resolvers" = "^5.2.2"
+zod = "^4.3.6"
+
+[dependencies.npm.dev]
+vite = "^6.4.1"
+"@vitejs/plugin-react" = "^4.2.1"
+
+[plugins.byllm.model]
+default_model = "${TEXT_MODEL:-groq/openai/gpt-oss-20b}"
+
+[serve]
+base_route_app = "app"
+
+[plugins.client.app_meta_data]
+title = "Spending mandate"
+description = "An agent spends money; every plan and purchase is checked first."
+
+[scripts]
+dev = "jac start --dev main.jac"
+mcp = "jac run mcp_server.jac"
+test = "jac test -d services"
