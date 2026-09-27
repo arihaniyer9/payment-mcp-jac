@@ -31,14 +31,14 @@ def call(name: str, key: str, **p) -> dict:
 
 
 def intent_of(d: dict) -> str:
-    """Final intent verdict (the one after ': ' at the end of the detail), plus
-    '*' when the deterministic reconciliation overrode the model."""
+    """Final intent verdict, suffixed with who decided it:
+    ':det' = deterministic instruction-scope check, ':llm' = LLM intent match."""
     c = next((c for c in d.get("checks", []) if c["name"] == "intent.match"), None)
     if c is None:
         return "NONE"
     tail = c["detail"].rsplit(": ", 1)[-1]
     final = next((v for v in ("MATCHES", "EXCEEDS_SCOPE", "UNRELATED") if v in tail), "ERROR")
-    return final + ("*" if "corrected:" in c["detail"] else "")
+    return final + (":det" if "(deterministic)" in c["detail"] else ":llm")
 
 
 def one_run(scenario: str) -> tuple[bool, str]:
@@ -54,7 +54,7 @@ def one_run(scenario: str) -> tuple[bool, str]:
             "account_number": acct, "amount": amount, "currency": "USD", "invoice_id": inv,
             "justification": {"instruction_id": "ins_001", "evidence_ids": []}})
         got.append((d.get("verdict"), intent_of(d)))
-    plain = [(v, i.rstrip("*")) for v, i in got]
+    plain = [(v, i.split(":")[0]) for v, i in got]
     if scenario == "3":
         ok = plain == [("APPROVE", "MATCHES"), ("ESCALATE", "EXCEEDS_SCOPE")]
     else:
@@ -65,14 +65,17 @@ def one_run(scenario: str) -> tuple[bool, str]:
 def main() -> None:
     scenario = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-    passed = 0
+    passed = det = llm = 0
     for i in range(1, n + 1):
         t = time.time()
         ok, got = one_run(scenario)
         passed += ok
+        det += got.count(":det")
+        llm += got.count(":llm")
         print(f"scenario {scenario} run {i}: {'PASS' if ok else 'FAIL'} {got} ({time.time() - t:.0f}s)",
               flush=True)
-    print(f"scenario {scenario}: {passed}/{n} passed")
+    print(f"scenario {scenario}: {passed}/{n} passed; intent decided deterministically "
+          f"{det}x, by LLM {llm}x")
 
 
 if __name__ == "__main__":

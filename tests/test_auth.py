@@ -27,6 +27,9 @@ ADMIN_ONLY = {
     "reset_demo": {},
     "list_escalations": {},
     "get_settings": {},
+    "list_decisions": {},
+    "get_evidence_graph": {"request_id": "x"},
+    "get_decision": {"request_id": "x"},
 }
 
 
@@ -35,7 +38,7 @@ def call(name: str, **payload) -> dict:
 
     Rejects any response that does not follow the ok-field contract.
     """
-    resp = httpx.post(f"{BASE_URL}/function/{name}", json=payload, timeout=30)
+    resp = httpx.post(f"{BASE_URL}/function/{name}", json=payload, timeout=120)
     resp.raise_for_status()
     envelope = resp.json()
     assert envelope.get("ok") is True, f"transport error: {envelope}"
@@ -50,9 +53,20 @@ def call(name: str, **payload) -> dict:
 
 
 def new_escalation() -> str:
+    """Create a REAL pending escalation through request_payment: the right
+    vendor, account and invoice, but an amount over the per-transaction cap.
+    With LLM checks off this ESCALATEs deterministically (no LLM call)."""
+    call("reset_demo", api_key=ADMIN_KEY)
+    call("set_mode", api_key=ADMIN_KEY, mode="FULL")
+    call("set_llm_checks", api_key=ADMIN_KEY, enabled=False)
+    for name in ("read_inbox", "get_instructions", "get_vendors"):
+        call(name, api_key=AGENT_KEY)
     rid = f"esc_{uuid.uuid4().hex[:8]}"
-    created = call("debug_create_escalation", api_key=ADMIN_KEY, request_id=rid)
-    assert created["ok"] is True
+    d = call("request_payment", api_key=AGENT_KEY, req={
+        "request_id": rid, "payee_name": "Acme Supplies", "account_number": "US-ACME-000111",
+        "amount": 6000.00, "currency": "USD", "invoice_id": "INV-4471",
+        "justification": {"instruction_id": "ins_001", "evidence_ids": []}})
+    assert d["ok"] is True and d["verdict"] == "ESCALATE", d
     return rid
 
 

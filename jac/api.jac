@@ -15,9 +15,9 @@ import from jac.context {
     vendor_view, invoice_view, instruction_view
 }
 import from jac.seed { reset_seed_data }
-import from jac.graph { IntentVerdict, find_instruction, find_invoice }
-import from jac.checks_llm { explain_intent }
-import from jac.pipeline { decision_view }
+import from jac.graph { find_invoice }
+import from jac.pipeline { decision_view, execute_payment }
+import from jac.evidence_graph { build_evidence_graph }
 
 
 def _now -> str {
@@ -125,10 +125,66 @@ def:pub resolve_escalation(
     if pr.verdict != Verdict.ESCALATE.value or pr.status != "PENDING" {
         return fail("CONFLICT", f"Request {request_id} is not a pending escalation.");
     }
-    # Phase 4 wires the gateway here; until then APPROVE marks it resolved only.
-    pr.status = "RESOLVED_" + action;
+    if action == "APPROVE" {
+        inv = find_invoice(pr.invoice_id);
+        if inv is not None and inv.paid {
+            return fail("CONFLICT", f"Invoice {inv.invoice_id} is already paid; refusing a duplicate payment.");
+        }
+        # Same gateway path as request_payment: charge, mark invoice paid on success.
+        execute_payment(pr);
+        if pr.status == "GATEWAY_ERROR" {
+            _audit("RESOLVE_ESCALATION", request_id, "APPROVE (gateway error)");
+            return ok({"request": _request_view(pr), "decision": decision_view(pr)});
+        }
+        pr.status = "RESOLVED_APPROVE";
+    } else {
+        pr.status = "RESOLVED_DENY";
+    }
     _audit("RESOLVE_ESCALATION", request_id, action);
-    return ok({"request": _request_view(pr)});
+    return ok({"request": _request_view(pr), "decision": decision_view(pr)});
+}
+
+
+def _row_ts(r: dict[str, any]) -> str {
+    return str(r.get("timestamp") or "");
+}
+
+
+"""All decisions, newest first. Dashboard list view."""
+def:pub list_decisions(api_key: str = "", limit: int = 100) -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    rows = [
+        {
+            "request_id": pr.request_id, "verdict": pr.verdict, "status": pr.status,
+            "payee_name": pr.payee_name, "amount": pr.amount_cents / 100,
+            "currency": pr.currency, "invoice_id": pr.invoice_id,
+            "timestamp": pr.created_at, "mode": pr.mode, "summary": pr.summary,
+            "payment_ref": pr.payment_ref
+        }
+        for pr in [root -->][?:PaymentRequest]
+    ];
+    rows = sorted(rows, key=_row_ts, reverse=True);
+    n = max(1, min(int(limit), 1000));
+    return ok({"decisions": rows[:n]});
+}
+
+
+"""The request's subgraph for the dashboard: request, matched evidence, their
+sources, instruction, invoice and vendor. Each node: id, type, label, trusted,
+failed (implicated in a failed check). Edges: from, to, type, field."""
+def:pub get_evidence_graph(api_key: str = "", request_id: str = "") -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    pr = find_request(request_id);
+    if pr is None {
+        return fail("NOT_FOUND", f"No payment request {request_id}.");
+    }
+    return ok(build_evidence_graph(pr));
 }
 
 
@@ -275,25 +331,6 @@ def:pub get_vendors(api_key: str = "") -> dict[str, any] {
 }
 
 
-# ---------- test fixture (admin-only) ----------
-# Creates a pending escalation so the auth test can prove the action never
-# executes. Replaced by the real pipeline in Phase 2/3.
-def:pub debug_create_escalation(api_key: str = "", request_id: str = "") -> dict[str, any] {
-    denied = authorize(api_key, Role.ADMIN);
-    if denied is not None {
-        return denied;
-    }
-    if request_id == "" or find_request(request_id) is not None {
-        return fail("BAD_REQUEST", "request_id must be new and non-empty.");
-    }
-    pr = root ++> PaymentRequest(
-        request_id=request_id, payee_name="Test Payee", amount_cents=100,
-        verdict=Verdict.ESCALATE.value, status="PENDING", created_at=_now()
-    );
-    return ok({"request": _request_view(pr)});
-}
-
-
 def:pub get_request_status(api_key: str = "", request_id: str = "") -> dict[str, any] {
     denied = authorize(api_key, Role.ADMIN);
     if denied is not None {
@@ -307,38 +344,7 @@ def:pub get_request_status(api_key: str = "", request_id: str = "") -> dict[str,
 }
 
 
-# ---------- diagnostics (admin-only) ----------
-
-"""Ask the intent model for its verdict + reasoning on a hypothetical payment,
-using the instruction text read from the graph. Diagnostic only."""
-def:pub debug_explain_intent(
-    api_key: str = "", instruction_id: str = "ins_001", payee_name: str = "",
-    amount: any = None, invoice_id: str = ""
-) -> dict[str, any] {
-    denied = authorize(api_key, Role.ADMIN);
-    if denied is not None {
-        return denied;
-    }
-    ins = find_instruction(instruction_id);
-    if ins is None {
-        return fail("NOT_FOUND", f"No instruction {instruction_id}.");
-    }
-    cents = to_cents(amount) or 0;
-    inv = find_invoice(invoice_id);
-    period = inv.period if inv is not None else "";
-    try {
-        e = explain_intent(ins.text, payee_name, cents, invoice_id, period);
-        v = e.verdict.value if isinstance(e.verdict, IntentVerdict) else str(e.verdict);
-        return ok({"verdict": v, "rationale": e.rationale, "inputs": {
-            "instruction_text": ins.text, "payee_name": payee_name, "amount_cents": cents,
-            "invoice_id": invoice_id, "invoice_period": period}});
-    } except Exception as ex {
-        return fail("LLM_ERROR", f"{type(ex).__name__}: {str(ex)[:300]}");
-    }
-}
-
-
-# ---------- agent endpoint (stub for Phase 1) ----------
+# ---------- agent endpoint ----------
 
 def:pub agent_ping(api_key: str = "") -> dict[str, any] {
     denied = authorize(api_key, Role.AGENT);

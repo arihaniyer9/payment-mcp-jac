@@ -14,7 +14,8 @@ import from jac.graph {
 import from jac.evidence { to_cents, now_iso }
 import from jac.checks_det { provenance_check, history_check }
 import from jac.checks_llm {
-    intent_check, should_interrogate, create_questions, judge, verification_check,
+    intent_check, instruction_scope_check, should_interrogate, create_questions, judge,
+    verification_check,
     VERIFIABLE_CHECKS
 }
 import from jac.decision { decide, rules_only_checks }
@@ -113,7 +114,12 @@ def _run_checks(pr: PaymentRequest) -> list[CheckResult] {
         account_provenance=prov.classification.get("account_number", "")
     );
     results = prov.results + hist.results;
-    if s.llm_checks_enabled {
+    # Instruction scope: deterministic first (always, in FULL mode). The LLM is
+    # consulted only when the instruction names no invoice to compare against.
+    scope = instruction_scope_check(pr);
+    if scope is not None {
+        results.append(scope);
+    } elif s.llm_checks_enabled {
         intent = intent_check(pr);
         if intent is not None {
             results.append(intent);
