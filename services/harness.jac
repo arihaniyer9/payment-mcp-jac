@@ -17,18 +17,19 @@ import time;
 import httpx;
 import from services.models { Mandate, AgentRun, Spawned, Evidence, Event }
 import from services.tools { plan_instructions, submit_plan, purchase }
+import from services.browser { web_search, open_page, click, type_text, scroll }
 import from services.vetting { num }
 
-# Groq directly (OpenAI-compatible), so we get the agent's reasoning and its built-in browsing steps.
+# Groq directly (OpenAI-compatible), so we get the agent's reasoning. Browsing is our own visible Chrome (browser.jac).
 glob GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-glob AGENT_MODEL = os.getenv("AGENT_MODEL", "openai/gpt-oss-120b");  # browser_search needs a gpt-oss model
+glob AGENT_MODEL = os.getenv("AGENT_MODEL", "openai/gpt-oss-120b");
 glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openai/gpt-oss-20b");  # separate daily quota
-glob MAX_STEPS = 40;
+glob MAX_STEPS = 80;
 glob MAX_HELPERS = 2;
 
 glob LEAD_SYSTEM = """You are a purchasing agent working for the user. You can spend money only through the payments tools.
 1. Call get_plan_instructions and follow it exactly.
-2. Use browser_search to find a real product for each item you plan to buy, then open its product page and base the estimate on the price listed there. Keep browsing short: one search per item, open one or two pages. Prefer retailers such as Walmart, Target or Party City. Don't look for images.
+2. You have a real web browser: web_search, open_page, click, type_text and scroll. Find a real product for each item you plan to buy, open its product page, and base the estimate on the price listed there. Keep browsing short: one search per item, open one or two pages. Prefer retailers such as Walmart or Target.
 3. Call submit_plan. If it is rejected, fix every failed finding and resubmit. If you need information only the user has, ask the user and stop.
 4. Once the plan is accepted, call purchase once per item node with the URL of the product page you opened and the price listed on it. Purchases are approved only for pages your browser opened, at a price shown on that page.
 5. If a purchase is rejected, fix what the findings say (open the page, pick a different page, or resubmit the plan if the price is above the estimate) and retry once. Otherwise report it.
@@ -36,7 +37,7 @@ glob LEAD_SYSTEM = """You are a purchasing agent working for the user. You can s
 Finish with a short summary for the user: what was bought, what was not, and why.""";
 
 glob HELPER_SYSTEM = """You are a helper purchasing agent. Another agent gave you a task under the user's spending mandate; its goal and budget are fixed and shared.
-You can spend money only through the purchase tool. Open each product page with the browser before buying it, and buy at the price shown on that page.
+You can spend money only through the purchase tool. Open each product page with the browser (open_page) before buying it, and buy at the price shown on that page.
 Finish with a short summary: what you bought, what was rejected, and why.""";
 
 glob ROGUE_SUFFIX = """
@@ -81,6 +82,26 @@ glob TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["node_id", "item_name", "payment_url", "price"]
         }
     },
+    "web_search": {
+        "description": "Search the web in your browser. Returns the results page: text, price lines and numbered clickable elements.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+    },
+    "open_page": {
+        "description": "Open a URL in your browser. Returns the page text, price lines and numbered clickable elements.",
+        "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
+    },
+    "click": {
+        "description": "Click a numbered element from the last page you saw.",
+        "parameters": {"type": "object", "properties": {"ref": {"type": "integer"}}, "required": ["ref"]}
+    },
+    "type_text": {
+        "description": "Type into a numbered input, optionally pressing Enter.",
+        "parameters": {"type": "object", "properties": {"ref": {"type": "integer"}, "text": {"type": "string"}, "submit": {"type": "boolean"}}, "required": ["ref", "text"]}
+    },
+    "scroll": {
+        "description": "Scroll the page up or down and see what's there.",
+        "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["down", "up"]}}, "required": ["direction"]}
+    },
     "spawn_agent": {
         "description": "Start a helper agent under the same mandate and budget, to split up buying. Returns the helper's summary when it finishes.",
         "parameters": {
@@ -91,8 +112,9 @@ glob TOOL_SCHEMAS: dict[str, dict] = {
     }
 };
 
-glob LEAD_TOOLS: list[str] = ["get_plan_instructions", "submit_plan", "purchase", "spawn_agent"];
-glob HELPER_TOOLS: list[str] = ["purchase"];
+glob BROWSER_TOOLS: list[str] = ["web_search", "open_page", "click", "type_text", "scroll"];
+glob LEAD_TOOLS: list[str] = ["get_plan_instructions", "submit_plan", "purchase", "spawn_agent", *BROWSER_TOOLS];
+glob HELPER_TOOLS: list[str] = ["purchase", *BROWSER_TOOLS];
 
 # ---------------------------------------------------------------- lifecycle
 
@@ -195,9 +217,6 @@ def think(m: Mandate, a: AgentRun) {
     if msg.get("reasoning") {
         m.log("thinking", a.name, {"text": str(msg["reasoning"])});
     }
-    for s in record_browsing(m, a.name, (msg.get("executed_tools") or []) as list[dict]) {
-        m.log("browse", a.name, s);
-    }
     if content {
         m.log("assistant", a.name, {"text": content});
     }
@@ -229,7 +248,7 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
         r = httpx.post(
             GROQ_URL,
             headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
-            json={"model": models[0], "messages": messages + hint, "tools": [{"type": "browser_search"}, *tools]},
+            json={"model": models[0], "messages": compact(messages) + hint, "tools": tools},
             timeout=120
         );
         if r.status_code == 429 {
@@ -263,38 +282,23 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
     raise RuntimeError("Groq kept rate-limiting or rejecting tool calls; try again in a minute.");
 }
 
-glob URL_RE = re.compile(r"https?://[^\s\]\)】†\"'<>]+");
-
-"""Groq's server-side browsing steps -> {action, detail} for the UI, and Evidence for every page opened.
-The page text comes from the browser tool, never from the agent, so it is safe ground truth."""
-def record_browsing(m: Mandate, agent: str, executed: list[dict]) -> list[dict] {
-    steps: list[dict] = [];
-    last_page = "";
-    for t in executed {
-        kind = str(t.get("type") or "");
-        output = str(t.get("output") or "");
-        try {
-            args = json.loads(str(t.get("arguments") or "{}"));
-        } except Exception {
-            args = {};
+"""Only the last two page observations go back to the model in full; older ones shrink to their URL.
+Keeps each request small enough for Groq's free-tier token limits."""
+def compact(messages: list[dict]) -> list[dict] {
+    pages = [i for i in range(len(messages)) if messages[i].get("role") == "tool" and "\"elements\"" in str(messages[i].get("content", ""))];
+    old = set(pages[:-2]);
+    out: list[dict] = [];
+    for i in range(len(messages)) {
+        msg = messages[i];
+        if i in old {
+            try {
+                seen = json.loads(str(msg["content"]));
+                msg = {**msg, "content": json.dumps({"url": seen.get("url"), "title": seen.get("title"), "note": "older page, details omitted"})};
+            } except Exception {}
         }
-        if "search" in kind {
-            steps.append({"action": "search", "detail": str(args.get("query", ""))});
-        } elif "open" in kind {
-            u = URL_RE.search(output);
-            last_page = u.group(0) if u else "";
-            if last_page {
-                m ++> Evidence(url=last_page, kind="open", text=output[:20000], agent=agent);
-            }
-            steps.append({"action": "open", "detail": last_page or str(args.get("id", ""))});
-        } elif "find" in kind {
-            if last_page {
-                m ++> Evidence(url=last_page, kind="find", text=output[:5000], agent=agent);
-            }
-            steps.append({"action": "find", "detail": str(args.get("pattern", ""))});
-        }
+        out.append(msg);
     }
-    return steps;
+    return out;
 }
 
 # ---------------------------------------------------------------- one tool call
@@ -330,11 +334,28 @@ def dispatch(m: Mandate, a: AgentRun, name: str, args: dict) -> dict {
         if name == "submit_plan" {
             return submit_plan(m, list(args.get("nodes") or []), list(args.get("edges") or []));
         }
+        if name == "web_search" {
+            return web_search(m, a.name, str(args.get("query", "")));
+        }
+        if name == "open_page" {
+            return open_page(m, a.name, str(args.get("url", "")));
+        }
+        if name == "click" {
+            return click(m, a.name, int(num(args.get("ref", 0))));
+        }
+        if name == "type_text" {
+            return type_text(m, a.name, int(num(args.get("ref", 0))), str(args.get("text", "")), bool(args.get("submit", False)));
+        }
+        if name == "scroll" {
+            return scroll(m, a.name, str(args.get("direction", "down")));
+        }
         if name == "purchase" {
             return purchase(m, a.name, str(args.get("node_id", "")), str(args.get("item_name", "")), str(args.get("payment_url", "")), num(args.get("price", 0)));
         }
     } except (KeyError, TypeError, ValueError) as e {
         return {"error": f"bad arguments for {name}: {e}"};
+    } except RuntimeError as e {
+        return {"error": f"{name} failed: {e}"};
     }
     return {"error": f"unknown tool '{name}'"};
 }

@@ -1,6 +1,7 @@
 """Middle column: the plan graph. Items on the left roll up into the goal; money flows along bought edges."""
 sv import from ..services.view { MandateView, AttemptView, CardView }
 import from ..lib.fmt { usd, px }
+import from .BrowserPanel { ModeTabs }
 
 def:pub Card(c: CardView, budget: float, selected: bool, onSelect: Callable[[str], None]) -> JsxElement {
     cls = "card " + c.kind + " " + c.status + (" flagged" if c.flagged else "") + (" sel" if selected else "");
@@ -18,13 +19,14 @@ def:pub Card(c: CardView, budget: float, selected: bool, onSelect: Callable[[str
     </button>;
 }
 
-def:pub GraphPanel(view: MandateView, shown: int, selected: str, onShow: Callable[[int], None], onSelect: Callable[[str], None]) -> JsxElement {
+def:pub GraphPanel(view: MandateView, shown: int, selected: str, onShow: Callable[[int], None], onSelect: Callable[[str], None], onMode: Callable[[str], None]) -> JsxElement {
     n = len(view.attempts);
     idx = shown if shown >= 0 and shown < n else n - 1;
     a: AttemptView | None = view.attempts[idx] if n > 0 else None;
     marks = {"accepted": " ✓", "rejected": " ✗", "checking": " …"};
     return <section className="panel" id="graph-panel" aria-label="Purchase graph">
-        <div className="panel-head"><h2>Purchase graph</h2>
+        <div className="panel-head"><h2>Purchase graph</h2><ModeTabs mode="graph" onMode={onMode} /></div>
+        <div className="panel-head" style={{"paddingTop": "0"}}>
             <div id="attempts">
                 {for (i, x) in enumerate(view.attempts) {
                     <button key={str(i)} className={"attempt " + x.status + (" on" if i == idx else "")} title={"Show plan v" + str(x.v)} onClick={lambda e: MouseEvent { onShow(-1 if i == n - 1 else i); }}>{"v" + str(x.v) + marks[x.status]}</button>

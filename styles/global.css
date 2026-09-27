@@ -217,3 +217,26 @@ button.step { cursor: pointer; } button.step:hover .step-text { color: var(--ink
 .auth label { display: block; font-size: 13px; font-weight: 700; color: var(--muted); margin-bottom: 12px; }
 .auth input { display: block; width: 100%; margin-top: 5px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 .linkish { background: none; border: 0; color: var(--plan); font-weight: 700; cursor: pointer; padding: 0; }
+
+/* ---------- live browser ---------- */
+.browser { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 18px 18px; gap: 10px; }
+.chrome-bar { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px 10px 0 0; padding: 7px 10px; margin-bottom: -10px; }
+.chrome-bar .dots i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); margin-right: 5px; }
+.chrome-bar .url { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); background: var(--soft); border-radius: 99px; padding: 3px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-pill { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 99px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+.live-pill.on { background: var(--agent-tint); color: var(--fail); }
+.live-pill.on::before { content: "● "; animation: pulse 1.1s infinite; }
+.screen { position: relative; border: 1px solid var(--line); border-radius: 0 0 10px 10px; overflow: hidden; background: #fff; aspect-ratio: 16 / 9; box-shadow: var(--shadow); }
+.screen img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.cursor { position: absolute; width: 0; height: 0; transition: left .45s ease, top .45s ease; pointer-events: none; }
+.cursor svg { position: absolute; left: -3px; top: -2px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.cursor .ripple { position: absolute; left: -14px; top: -14px; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--fail); opacity: 0; }
+.cursor.click .ripple, .cursor.type .ripple { animation: ripple .9s ease-out; }
+@keyframes ripple { 0% { transform: scale(.3); opacity: .9; } 100% { transform: scale(1.6); opacity: 0; } }
+.caption { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); background: rgba(28,34,48,.86); color: #fff; font-size: 12.5px; padding: 5px 10px; border-radius: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.caption .who { background: rgba(255,255,255,.15); color: #fff; }
+.film { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 90px; flex: 1; }
+.frame { display: block; text-align: left; border: 0; border-top: 1px solid var(--line); background: none; padding: 6px 4px; font-size: 12.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frame small { display: block; color: var(--muted); font-size: 11px; }
+.frame.on { background: var(--soft); }
+.frame:hover { background: var(--soft); }

@@ -59,21 +59,6 @@ test "helpers only get the purchase tool" {
     assert "not available" in r["error"];
 }
 
-test "browser output becomes evidence; search results don't" {
-    m = fresh();
-    executed = [
-        {"type": "browser_search", "arguments": "{\"query\": \"dino balloons\"}", "output": "L4: * 【0†Dino Balloon Set†www.walmart.com】"},
-        {"type": "browser.open", "arguments": "{\"cursor\": 0, \"id\": 0}", "output": "L1: URL:\nL2: https://www.walmart.com/ip/Dino-Balloon-Set/18020857092\nL9: # Dino Balloon Set"},
-        {"type": "browser.find", "arguments": "{\"cursor\": 1, \"pattern\": \"price\"}", "output": "Current price is USD$30.67"}
-    ];
-    steps = record_browsing(m, "lead", executed);
-    assert [s["action"] for s in steps] == ["search", "open", "find"];
-    ev = [e for e in [m -->[?:Evidence]]];
-    assert len(ev) == 2;
-    assert ev[0].url == "https://www.walmart.com/ip/Dino-Balloon-Set/18020857092";
-    assert "USD$30.67" in ev[1].text and ev[1].url == ev[0].url;
-}
-
 test "the human can only reply between turns" {
     m = fresh();
     assert not say(m, "hurry up");

@@ -85,7 +85,8 @@ def purchase(m: Mandate, agent: str, node_id: str, item_name: str, payment_url: 
     if not verdict.approved {
         return result;
     }
-    record.image = og_image(html, payment_url) if html else "";
+    shown = [e.image for e in seen if e.image];
+    record.image = shown[-1] if shown else (og_image(html, payment_url) if html else "");
     try {
         intent = authorize(f"{jid(m)}:{node_id}", node_id, item_name, payment_url, price);
     } except Exception as e {

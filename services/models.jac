@@ -73,12 +73,27 @@ node Purchase {
         t: float = 0.0;
 }
 
-"""A page or search result the harness itself received from the browser tool. Agent-written text never lands here."""
+"""A page the harness's own browser rendered. Agent-written text never lands here."""
 node Evidence {
     has url: str,
         kind: str,
         text: str,
         agent: str;
+    has image: str = "";
+}
+
+"""One browser action: a screenshot and where the cursor went (x/y in page pixels, -1 when none)."""
+node Shot {
+    has n: int,
+        agent: str,
+        action: str,
+        detail: str,
+        url: str,
+        title: str,
+        x: float,
+        y: float,
+        data: str,
+        t: float;
 }
 
 node Event {
