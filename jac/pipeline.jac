@@ -19,6 +19,7 @@ import from jac.checks_llm {
 }
 import from jac.decision { decide, rules_only_checks }
 import jac.messages as msg;
+import from jac.gateway { charge }
 
 
 def check_view(c: CheckResult) -> dict[str, any] {
@@ -82,9 +83,7 @@ def finalize(pr: PaymentRequest) {
 
 
 def _gateway(pr: PaymentRequest) -> str {
-    # Phase 4: Stripe test mode when MOCK_GATEWAY is not "true".
-    _ = os.getenv("MOCK_GATEWAY", "true");
-    return f"mock_{pr.request_id}";
+    return charge(pr.request_id, pr.amount_cents, pr.currency, pr.invoice_id, pr.payee_name);
 }
 
 

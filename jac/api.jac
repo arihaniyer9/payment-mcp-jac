@@ -15,6 +15,8 @@ import from jac.context {
     vendor_view, invoice_view, instruction_view
 }
 import from jac.seed { reset_seed_data }
+import from jac.graph { IntentVerdict, find_instruction, find_invoice }
+import from jac.checks_llm { explain_intent }
 import from jac.pipeline { decision_view }
 
 
@@ -302,6 +304,37 @@ def:pub get_request_status(api_key: str = "", request_id: str = "") -> dict[str,
         return fail("NOT_FOUND", f"No payment request {request_id}.");
     }
     return ok({"request": _request_view(pr)});
+}
+
+
+# ---------- diagnostics (admin-only) ----------
+
+"""Ask the intent model for its verdict + reasoning on a hypothetical payment,
+using the instruction text read from the graph. Diagnostic only."""
+def:pub debug_explain_intent(
+    api_key: str = "", instruction_id: str = "ins_001", payee_name: str = "",
+    amount: any = None, invoice_id: str = ""
+) -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    ins = find_instruction(instruction_id);
+    if ins is None {
+        return fail("NOT_FOUND", f"No instruction {instruction_id}.");
+    }
+    cents = to_cents(amount) or 0;
+    inv = find_invoice(invoice_id);
+    period = inv.period if inv is not None else "";
+    try {
+        e = explain_intent(ins.text, payee_name, cents, invoice_id, period);
+        v = e.verdict.value if isinstance(e.verdict, IntentVerdict) else str(e.verdict);
+        return ok({"verdict": v, "rationale": e.rationale, "inputs": {
+            "instruction_text": ins.text, "payee_name": payee_name, "amount_cents": cents,
+            "invoice_id": invoice_id, "invoice_period": period}});
+    } except Exception as ex {
+        return fail("LLM_ERROR", f"{type(ex).__name__}: {str(ex)[:300]}");
+    }
 }
 
 

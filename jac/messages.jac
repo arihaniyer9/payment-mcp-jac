@@ -174,6 +174,11 @@ def summarize(pr: PaymentRequest, checks: list[CheckResult]) -> str {
         if pr.payment_ref is None and pr.status == "GATEWAY_ERROR" {
             return f"Approved {what}, but the payment provider couldn't complete it. Nothing was charged.";
         }
+        verified = [c for c in checks if c.name.startswith("verification.")];
+        if verified {
+            return f"Approved {what}. The amount differed from the invoice, but the answers to our "
+                + "verification questions matched your records.";
+        }
         return f"Approved {what}. Every detail matches your own records and your instructions.";
     }
     if pr.verdict == Verdict.DENY.value {

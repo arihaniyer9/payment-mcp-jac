@@ -31,13 +31,14 @@ def call(name: str, key: str, **p) -> dict:
 
 
 def intent_of(d: dict) -> str:
+    """Final intent verdict (the one after ': ' at the end of the detail), plus
+    '*' when the deterministic reconciliation overrode the model."""
     c = next((c for c in d.get("checks", []) if c["name"] == "intent.match"), None)
     if c is None:
         return "NONE"
-    for v in ("MATCHES", "EXCEEDS_SCOPE", "UNRELATED"):
-        if v in c["detail"]:
-            return v
-    return "ERROR"
+    tail = c["detail"].rsplit(": ", 1)[-1]
+    final = next((v for v in ("MATCHES", "EXCEEDS_SCOPE", "UNRELATED") if v in tail), "ERROR")
+    return final + ("*" if "corrected:" in c["detail"] else "")
 
 
 def one_run(scenario: str) -> tuple[bool, str]:
@@ -53,10 +54,11 @@ def one_run(scenario: str) -> tuple[bool, str]:
             "account_number": acct, "amount": amount, "currency": "USD", "invoice_id": inv,
             "justification": {"instruction_id": "ins_001", "evidence_ids": []}})
         got.append((d.get("verdict"), intent_of(d)))
+    plain = [(v, i.rstrip("*")) for v, i in got]
     if scenario == "3":
-        ok = got == [("APPROVE", "MATCHES"), ("ESCALATE", "EXCEEDS_SCOPE")]
+        ok = plain == [("APPROVE", "MATCHES"), ("ESCALATE", "EXCEEDS_SCOPE")]
     else:
-        ok = got == [("DENY", "UNRELATED")]
+        ok = plain == [("DENY", "UNRELATED")]
     return ok, str(got)
 
 

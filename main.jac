@@ -4,7 +4,8 @@ import from jac.api {
     resolve_escalation, reset_demo, debug_create_escalation,
     get_request_status, agent_ping, get_decision,
     read_inbox, get_instructions, get_vendors,
-    register_vendor, register_invoice, register_instruction
+    register_vendor, register_invoice, register_instruction,
+    debug_explain_intent
 }
 import from jac.pipeline { request_payment, answer_verification }
 

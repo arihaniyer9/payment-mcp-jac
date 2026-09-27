@@ -24,6 +24,8 @@ menuAccent = "subtle"
 menuColor = "default"
 
 [dependencies]
+stripe = "~=15.6"
+
 [dependencies.npm]
 react = "^18.2.0"
 react-dom = "^18.2.0"
