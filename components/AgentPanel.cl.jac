@@ -43,7 +43,7 @@ def:pub Markdown(text: str) -> JsxElement {
     </div>;
 }
 
-def:pub ChatRow(item: ChatItem, onDecision: Callable[[int], None], onBrowser: Callable[[], None]) -> JsxElement {
+def:pub ChatRow(item: ChatItem, onDecision: Callable[[int], None]) -> JsxElement {
     tag = <span className="who">{item.agent}</span> if item.agent != "lead" and item.agent != "you" else None;
     if item.k == "msg" {
         return <div className={"msg " + item.who}>{tag}{<Markdown text={item.text} /> if item.who == "agent" else item.text}</div>;
@@ -53,7 +53,7 @@ def:pub ChatRow(item: ChatItem, onDecision: Callable[[int], None], onBrowser: Ca
             <details><summary>Show them</summary><pre>{item.text}</pre></details></div>;
     }
     if item.k == "browse" {
-        return <button className="step ok" title="Watch in the live browser" onClick={lambda e: MouseEvent { onBrowser(); }}><span className="dot"></span><span className="step-text">{tag}{"Browsed the web · " + plural(item.searches, "search") + ", " + plural(item.pages, "page action")}</span></button>;
+        return <div className="step ok"><span className="dot"></span><span className="step-text">{tag}{"Browsed the web · " + plural(item.searches, "search") + ", " + plural(item.pages, "page")}</span></div>;
     }
     body = <span className="step-text">{tag}{item.pre}<b>{item.bold}</b>{item.post}</span>;
     if item.decision >= 0 {
@@ -64,13 +64,13 @@ def:pub ChatRow(item: ChatItem, onDecision: Callable[[int], None], onBrowser: Ca
 
 def:pub AgentPanel(
     view: MandateView, busy: bool, reply: str, error: str,
-    onReply: Callable[[str], None], onSend: Callable[[], None], onDecision: Callable[[int], None], onBrowser: Callable[[], None]
+    onReply: Callable[[str], None], onSend: Callable[[], None], onDecision: Callable[[int], None]
 ) -> JsxElement {
     return <section className="panel" id="agent" aria-label="Agent">
         <div className="panel-head"><h2>Agent</h2><span className="sub">Groq · browses the web</span></div>
         <div className="scroll"><div id="chat" aria-live="polite">
             {for (i, item) in enumerate(view.chat) {
-                <div key={str(i)} className={"helper-row" if item.agent.startswith("helper") else ""}><ChatRow item={item} onDecision={onDecision} onBrowser={onBrowser} /></div>
+                <div key={str(i)} className={"helper-row" if item.agent.startswith("helper") else ""}><ChatRow item={item} onDecision={onDecision} /></div>
             }}
             {error and <div className="step bad"><span className="dot"></span><span className="step-text"><b>Error:</b> {error}</span></div>}
         </div></div>

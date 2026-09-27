@@ -5,8 +5,8 @@ user's mandates, agents and evidence are invisible to everyone else. Agents get 
 no credentials at all; the harness calls their tools in-process.
 """
 import time;
-import from services.models { Mandate, MandateSummary, Event, Shot }
-import from services.view { MandateView, AttemptView, BuyView, Decision, ChatItem, TraceRow, Check, CardView, PathView, ShotView, build_view }
+import from services.models { Mandate, MandateSummary, Event }
+import from services.view { MandateView, AttemptView, BuyView, Decision, ChatItem, TraceRow, Check, CardView, PathView, build_view }
 import from services.vetting { extract_mandate, retrying, MandateDraft, money }
 import from services.harness { start, say, step }
 
@@ -71,14 +71,4 @@ def:priv list_mandates() -> list[MandateSummary] {
 def:priv mandate_log(mandate_id: str) -> list[dict] {
     m = _mine(mandate_id);
     return [e.to_dict() for e in sorted([m -->[?:Event]], key=lambda e: Event : e.seq)];
-}
-
-"""One browser screenshot as a data URL, for the live browser view."""
-def:priv browser_shot(mandate_id: str, n: int) -> str {
-    for s in [_mine(mandate_id) -->[?:Shot]] {
-        if s.n == n {
-            return "data:image/jpeg;base64," + s.data;
-        }
-    }
-    return "";
 }

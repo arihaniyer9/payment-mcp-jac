@@ -3,7 +3,6 @@
     Mandate --> AgentRun (lead) ->:Spawned:-> AgentRun (helpers)
             --> PlanAttempt --> PlanNode ->:Feeds:-> PlanNode (child -> parent)
             --> Purchase
-            --> Evidence   (what the harness saw the agent browse: the provenance record)
             --> Event      (append-only audit log the UI replays)
 
 The goal and budget live only on the Mandate, which only the human's endpoints can create.
@@ -15,7 +14,6 @@ node Mandate {
         budget: float,
         request: str;
     has rogue: bool = False,
-        strict_sources: bool = True,
         created_at: float = 0.0,
         spent: float = 0.0,
         seq: int = 0,
@@ -71,29 +69,6 @@ node Purchase {
         payment_intent: str = "",
         image: str = "",
         t: float = 0.0;
-}
-
-"""A page the harness's own browser rendered. Agent-written text never lands here."""
-node Evidence {
-    has url: str,
-        kind: str,
-        text: str,
-        agent: str;
-    has image: str = "";
-}
-
-"""One browser action: a screenshot and where the cursor went (x/y in page pixels, -1 when none)."""
-node Shot {
-    has n: int,
-        agent: str,
-        action: str,
-        detail: str,
-        url: str,
-        title: str,
-        x: float,
-        y: float,
-        data: str,
-        t: float;
 }
 
 node Event {

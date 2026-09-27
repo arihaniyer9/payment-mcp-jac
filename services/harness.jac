@@ -1,27 +1,25 @@
-"""The agent harness: a Groq model with web browsing, driven one step at a time.
+"""The agent harness: an OpenRouter model with the payment tools, driven one step at a time.
 
 Every step is one short, committed unit of work on the Mandate subgraph, so the conversation,
 pending tool calls and helper agents all live in the graph and survive a page reload:
 
   - an agent with pending tool calls runs the next one,
-  - otherwise it asks the model for its next move (browsing happens inside that call),
+  - otherwise it asks the model for its next move,
   - an agent waiting on a helper lets the helper take the step instead.
 
-The harness records every page the browser opens as Evidence. Purchases are checked against
-that record, so an agent can't pay a URL it never visited or a price that isn't on the page.
+The agent can't browse. Purchases are checked against the product page as the server itself
+fetches it, so an agent can't pay a URL that doesn't load or a price that isn't on the page.
 """
 import os;
 import re;
 import json;
 import time;
 import httpx;
-import from services.models { Mandate, AgentRun, Spawned, Evidence, Event }
+import from services.models { Mandate, AgentRun, Spawned, Event }
 import from services.tools { plan_instructions, submit_plan, purchase }
-import from services.browser { web_search, open_page, click, type_text, scroll }
 import from services.vetting { num }
 
 # OpenRouter (OpenAI-compatible) with free tool-calling models; it falls back between them itself.
-# Browsing is our own visible Chrome (browser.jac).
 glob LLM_URL = "https://openrouter.ai/api/v1/chat/completions";
 glob AGENT_MODEL = os.getenv("AGENT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free");
 glob FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "nvidia/nemotron-3-super-120b-a12b:free");
@@ -30,15 +28,15 @@ glob MAX_HELPERS = 2;
 
 glob LEAD_SYSTEM = """You are a purchasing agent working for the user. You can spend money only through the payments tools.
 1. Call get_plan_instructions and follow it exactly.
-2. You have a real web browser: web_search, open_page, click, type_text and scroll. Find a real product for each item you plan to buy, open its product page, and base the estimate on the price listed there. Keep browsing short: one search per item, open one or two pages. Prefer retailers such as Walmart or Target.
+2. You can't browse the web. For each item, pick a real product you know from a major retailer such as Target, Walmart or Amazon, with its product page URL and current price. The payment system fetches that page itself and checks the price is listed on it.
 3. Call submit_plan. If it is rejected, fix every failed finding and resubmit. If you need information only the user has, ask the user and stop.
-4. Once the plan is accepted, call purchase once per item node with the URL of the product page you opened and the price listed on it. Purchases are approved only for pages your browser opened, at a price shown on that page.
-5. If a purchase is rejected, fix what the findings say (open the page, pick a different page, or resubmit the plan if the price is above the estimate) and retry once. Otherwise report it.
+4. Once the plan is accepted, call purchase once per item node with the product page URL and the price listed on it. Purchases are approved only if the page loads and shows that price.
+5. If a purchase is rejected, fix what the findings say (use the price the findings show, pick a different product page, or resubmit the plan if the price is above the estimate) and retry once. Otherwise report it.
 6. spawn_agent starts a helper that shares your mandate and budget. Use it only to split up buying when there are many items; tell it the node ids, names and the pages to buy from.
 Finish with a short summary for the user: what was bought, what was not, and why.""";
 
 glob HELPER_SYSTEM = """You are a helper purchasing agent. Another agent gave you a task under the user's spending mandate; its goal and budget are fixed and shared.
-You can spend money only through the purchase tool. Open each product page with the browser (open_page) before buying it, and buy at the price shown on that page.
+You can spend money only through the purchase tool. Buy from the product page URL you were given, at the price listed on it; the payment system fetches the page and checks.
 Finish with a short summary: what you bought, what was rejected, and why.""";
 
 glob ROGUE_SUFFIX = """
@@ -71,7 +69,7 @@ glob TOOL_SCHEMAS: dict[str, dict] = {
         }
     },
     "purchase": {
-        "description": "Step 3. Request payment for one item node of the accepted plan, from a product page your browser opened, at the price listed on it.",
+        "description": "Step 3. Request payment for one item node of the accepted plan, at the price listed on its product page.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -83,26 +81,6 @@ glob TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["node_id", "item_name", "payment_url", "price"]
         }
     },
-    "web_search": {
-        "description": "Search the web in your browser. Returns the results page: text, price lines and numbered clickable elements.",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
-    },
-    "open_page": {
-        "description": "Open a URL in your browser. Returns the page text, price lines and numbered clickable elements.",
-        "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
-    },
-    "click": {
-        "description": "Click a numbered element from the last page you saw.",
-        "parameters": {"type": "object", "properties": {"ref": {"type": "integer"}}, "required": ["ref"]}
-    },
-    "type_text": {
-        "description": "Type into a numbered input, optionally pressing Enter.",
-        "parameters": {"type": "object", "properties": {"ref": {"type": "integer"}, "text": {"type": "string"}, "submit": {"type": "boolean"}}, "required": ["ref", "text"]}
-    },
-    "scroll": {
-        "description": "Scroll the page up or down and see what's there.",
-        "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["down", "up"]}}, "required": ["direction"]}
-    },
     "spawn_agent": {
         "description": "Start a helper agent under the same mandate and budget, to split up buying. Returns the helper's summary when it finishes.",
         "parameters": {
@@ -113,9 +91,8 @@ glob TOOL_SCHEMAS: dict[str, dict] = {
     }
 };
 
-glob BROWSER_TOOLS: list[str] = ["web_search", "open_page", "click", "type_text", "scroll"];
-glob LEAD_TOOLS: list[str] = ["get_plan_instructions", "submit_plan", "purchase", "spawn_agent", *BROWSER_TOOLS];
-glob HELPER_TOOLS: list[str] = ["purchase", *BROWSER_TOOLS];
+glob LEAD_TOOLS: list[str] = ["get_plan_instructions", "submit_plan", "purchase", "spawn_agent"];
+glob HELPER_TOOLS: list[str] = ["purchase"];
 
 # ---------------------------------------------------------------- lifecycle
 
@@ -248,7 +225,7 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
         r = httpx.post(
             LLM_URL,
             headers={"Authorization": f"Bearer {os.environ['OPEN_ROUTER_API_KEY']}"},
-            json={"models": [AGENT_MODEL, FALLBACK_MODEL], "messages": compact(messages) + hint, "tools": tools},
+            json={"models": [AGENT_MODEL, FALLBACK_MODEL], "messages": messages + hint, "tools": tools},
             timeout=120
         );
         if r.status_code == 429 {
@@ -275,25 +252,6 @@ def complete(messages: list[dict], tools: list[dict]) -> dict {
         return body["choices"][0]["message"] as dict;
     }
     raise RuntimeError("OpenRouter kept rate-limiting or failing; try again in a minute.");
-}
-
-"""Only the last two page observations go back to the model in full; older ones shrink to their URL.
-Keeps each request small enough for Groq's free-tier token limits."""
-def compact(messages: list[dict]) -> list[dict] {
-    pages = [i for i in range(len(messages)) if messages[i].get("role") == "tool" and "\"elements\"" in str(messages[i].get("content", ""))];
-    old = set(pages[:-2]);
-    out: list[dict] = [];
-    for i in range(len(messages)) {
-        msg = messages[i];
-        if i in old {
-            try {
-                seen = json.loads(str(msg["content"]));
-                msg = {**msg, "content": json.dumps({"url": seen.get("url"), "title": seen.get("title"), "note": "older page, details omitted"})};
-            } except Exception {}
-        }
-        out.append(msg);
-    }
-    return out;
 }
 
 # ---------------------------------------------------------------- one tool call
@@ -329,28 +287,11 @@ def dispatch(m: Mandate, a: AgentRun, name: str, args: dict) -> dict {
         if name == "submit_plan" {
             return submit_plan(m, list(args.get("nodes") or []), list(args.get("edges") or []));
         }
-        if name == "web_search" {
-            return web_search(m, a.name, str(args.get("query", "")));
-        }
-        if name == "open_page" {
-            return open_page(m, a.name, str(args.get("url", "")));
-        }
-        if name == "click" {
-            return click(m, a.name, int(num(args.get("ref", 0))));
-        }
-        if name == "type_text" {
-            return type_text(m, a.name, int(num(args.get("ref", 0))), str(args.get("text", "")), bool(args.get("submit", False)));
-        }
-        if name == "scroll" {
-            return scroll(m, a.name, str(args.get("direction", "down")));
-        }
         if name == "purchase" {
             return purchase(m, a.name, str(args.get("node_id", "")), str(args.get("item_name", "")), str(args.get("payment_url", "")), num(args.get("price", 0)));
         }
     } except (KeyError, TypeError, ValueError) as e {
         return {"error": f"bad arguments for {name}: {e}"};
-    } except RuntimeError as e {
-        return {"error": f"{name} failed: {e}"};
     }
     return {"error": f"unknown tool '{name}'"};
 }

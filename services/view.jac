@@ -4,7 +4,7 @@ The client receives these hydrated (Jac generates the wire types), so it only re
 from the log means a reload, or opening an old mandate, shows exactly what happened.
 """
 import json;
-import from services.models { Mandate, AgentRun, Event, Shot }
+import from services.models { Mandate, AgentRun, Event }
 import from services.vetting { num }
 import from services.harness { active_agent }
 
@@ -99,19 +99,6 @@ obj TraceRow {
         link: str = "";
 }
 
-"""One browser action, without its image (the client fetches that separately)."""
-obj ShotView {
-    has n: int,
-        agent: str,
-        action: str,
-        detail: str,
-        url: str,
-        title: str,
-        x: float,
-        y: float,
-        when: str;
-}
-
 obj MandateView {
     has id: str,
         goal: str,
@@ -123,8 +110,7 @@ obj MandateView {
         buys: list[BuyView] = [],
         decisions: list[Decision] = [],
         chat: list[ChatItem] = [],
-        trace: list[TraceRow] = [],
-        shots: list[ShotView] = [];
+        trace: list[TraceRow] = [];
 }
 
 def plural(n: int, word: str) -> str {
@@ -196,7 +182,7 @@ def build_view(m: Mandate) -> MandateView {
             }
             if d["action"] == "search" {
                 view.chat[browse_at].searches += 1;
-            } else {
+            } elif d["action"] == "open" {
                 view.chat[browse_at].pages += 1;
             }
         } elif e.kind == "error" {
@@ -211,10 +197,6 @@ def build_view(m: Mandate) -> MandateView {
     }
     view.attempts = [attempt_view(i + 1, plans[i], raw[i] if i < len(raw) else {}, buys) for i in range(len(plans))];
     view.buys = list(buys.values());
-    view.shots = [
-        ShotView(n=s.n, agent=s.agent, action=s.action, detail=s.detail, url=s.url, title=s.title, x=s.x, y=s.y, when=f"+{max(0.0, s.t - m.created_at):.1f}s")
-        for s in sorted([m -->[?:Shot]], key=lambda s: Shot : s.n)
-    ];
     return view;
 }
 
@@ -302,9 +284,9 @@ def trace_row(e: Event, t0: float) -> TraceRow {
     if k == "browse" {
         act = str(d["action"]);
         detail = str(d["detail"]);
-        label = {"search": "Search", "open": "Opens", "click": "Clicks", "type": "Types", "scroll": "Scrolls"}.get(act, act);
-        url = str(d.get("url") or "");
-        return TraceRow(when=when, cls="open" if act != "search" else "search", label=label, agent=e.agent, summary=f"“{detail}”" + (f" → {url}" if url and act != "open" else ""), link=url if act == "open" else "");
+        label = {"search": "Search", "open": "Opens", "find": "Finds"}.get(act, act);
+        link = detail if act == "open" and detail.startswith("http") else "";
+        return TraceRow(when=when, cls=act, label=label, agent=e.agent, summary=detail if link else f"“{detail}”", link=link);
     }
     if k == "tool_call" {
         return TraceRow(when=when, cls="call", label="Calls", agent=e.agent, summary=str(d["name"]), detail=json.dumps(d.get("args"), indent=2));

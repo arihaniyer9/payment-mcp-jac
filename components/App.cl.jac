@@ -7,7 +7,6 @@ sv import from ..services.vetting { MandateDraft }
 import from .Intake { Intake }
 import from .AgentPanel { AgentPanel }
 import from .GraphPanel { GraphPanel }
-import from .BrowserPanel { BrowserPanel }
 import from .Lens { Lens }
 import from ..lib.fmt { usd }
 
@@ -30,8 +29,7 @@ def:pub App() -> JsxElement {
         tab: str = "why",
         selected: str = "",
         focus: int = -1,
-        shown: int = -1,
-        middle: str = "browser";
+        shown: int = -1;
 
     async can with [logged] entry {
         if logged {
@@ -222,16 +220,10 @@ def:pub App() -> JsxElement {
                 <AgentPanel view={view} busy={busy} reply={reply} error={error}
                     onReply={lambda v: str { reply = v; }}
                     onSend={sendReply}
-                    onDecision={lambda i: int { focus = i; selected = ""; tab = "why"; middle = "graph"; }}
-                    onBrowser={lambda { middle = "browser"; }} />
-                {if middle == "browser" {
-                    <BrowserPanel view={view} onMode={lambda m: str { middle = m; }} />
-                } else {
-                    <GraphPanel view={view} shown={shown} selected={selected}
-                        onShow={lambda i: int { shown = i; selected = ""; }}
-                        onSelect={lambda nid: str { selected = nid; tab = "why"; }}
-                        onMode={lambda m: str { middle = m; }} />
-                }}
+                    onDecision={lambda i: int { focus = i; selected = ""; tab = "why"; }} />
+                <GraphPanel view={view} shown={shown} selected={selected}
+                    onShow={lambda i: int { shown = i; selected = ""; }}
+                    onSelect={lambda nid: str { selected = nid; tab = "why"; }} />
                 <Lens view={view} tab={tab} selected={selected} focus={focus}
                     onTab={lambda t: str { tab = t; }}
                     onBack={lambda { selected = ""; }} />

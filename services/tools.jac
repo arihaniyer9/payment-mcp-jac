@@ -12,8 +12,8 @@ import from stripe { StripeClient, PaymentIntent }
 import from pathlib { Path }
 import from urllib.parse { urljoin, urlparse }
 import from dotenv { load_dotenv }
-import from services.models { Mandate, PlanAttempt, PlanNode, Purchase, Evidence }
-import from services.vetting { vet_plan, vet_purchase, page_key, money }
+import from services.models { Mandate, PlanAttempt, PlanNode, Purchase }
+import from services.vetting { vet_plan, vet_purchase, money }
 
 glob ROOT_DIR: Path = Path(__file__ or ".").resolve().parent.parent;
 with entry {
@@ -68,16 +68,10 @@ def purchase(m: Mandate, agent: str, node_id: str, item_name: str, payment_url: 
     if done {
         return {"approved": False, "error": f"'{node_id}' already purchased ({done[0].payment_intent}) by {done[0].agent}"};
     }
-    key = page_key(payment_url);
-    seen = [e for e in [m -->[?:Evidence]] if page_key(e.url) == key];
-    opened = len(seen) > 0;
-    pages = [e.text for e in seen];
-    # ponytail: only fetch pages the browser already opened (or any public page for external MCP clients); DNS rebinding not handled
-    html: str = (fetch_page(payment_url) or "") if opened or not m.strict_sources else "";
-    if html {
-        pages.append(html);
-        opened = opened or not m.strict_sources;
-    }
+    # ponytail: public https hosts only (see public_host); DNS rebinding not handled
+    html: str = fetch_page(payment_url) or "";
+    opened = html != "";
+    pages = [html] if html else [];
     verdict = vet_purchase(node_id, item, item_name, payment_url, price, m.spent, m.budget, BLACKLIST, opened, pages);
     record = Purchase(node_id=node_id, item_name=item_name, url=payment_url, price=price, agent=agent, findings=verdict.findings, t=time.time());
     m ++> record;
@@ -85,8 +79,7 @@ def purchase(m: Mandate, agent: str, node_id: str, item_name: str, payment_url: 
     if not verdict.approved {
         return result;
     }
-    shown = [e.image for e in seen if e.image];
-    record.image = shown[-1] if shown else (og_image(html, payment_url) if html else "");
+    record.image = og_image(html, payment_url) if html else "";
     try {
         intent = authorize(f"{jid(m)}:{node_id}", node_id, item_name, payment_url, price);
     } except Exception as e {

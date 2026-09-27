@@ -1,8 +1,7 @@
 """MCP server for any MCP client (Claude Code, Cursor, ...): the same vetting as the web app.
 
 Ground truth (GOAL, BUDGET, optional REQUEST) comes from the human's client config, never from the agent.
-There is no harness here to watch the agent browse, so a purchase page counts as seen when the server
-itself can fetch it, and the price must still be listed on it.
+As in the web app, a purchase page must load when the server fetches it, and the price must be listed on it.
 
 Run: GOAL="..." BUDGET=100 jac run mcp_server.jac
 """
@@ -21,7 +20,7 @@ def current() -> Mandate {
     global mandate;
     if mandate is None {
         goal = os.environ["GOAL"];
-        m = Mandate(goal=goal, budget=money(num(os.environ["BUDGET"])), request=os.getenv("REQUEST", goal), strict_sources=False, created_at=time.time());
+        m = Mandate(goal=goal, budget=money(num(os.environ["BUDGET"])), request=os.getenv("REQUEST", goal), created_at=time.time());
         root ++> m;
         mandate = m;
     }
