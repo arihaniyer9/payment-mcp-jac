@@ -2,18 +2,18 @@
 
 An MCP server that lets an agent spend money only after two levels of vetting:
 
-1. **Vet the plan.** The agent breaks the user's goal into a graph (item → subgoal → goal, with a price on each node). Deterministic checks and LLM judges review the graph. If they reject it, the agent gets feedback and tries again.
+1. **Vet the plan.** The agent breaks the user's goal into a graph (item → subgoal → goal, with a price on each node). Fixed rules and AI judges review the graph. If they reject it, the agent gets feedback and tries again.
 2. **Vet each purchase.** Every payment request against an accepted item runs through independent checks. The card is authorized (not captured) in Stripe test mode only if every check passes.
 
-Checks that are arithmetic are deterministic: the goal and budget match the mandate, each node's price equals the sum of its children, the total is within budget, the price is at most the estimate, cumulative spend stays within budget, the domain isn't blacklisted, and the URL uses https. Checks that need judgment go to LLM judges via [byLLM](https://github.com/jaseci-labs/jac): whether the connections are reasonable, whether prices are reasonable, whether each child relates to its parent, whether the URL is legit or a scam, and whether the URL sells the item. A judge that errors counts as a fail.
+Checks that are arithmetic are deterministic: the goal and budget match the mandate, each node's price equals the sum of its children, the total is within budget, the price is at most the estimate, cumulative spend stays within budget, the domain isn't blacklisted, and the URL uses https. Yes/no checks that need judgment go to [Jev](https://typesafe.ai) (TypeSafe), a typed model that returns a calibrated P(yes) for each question in one ~150 ms call: whether the plan as a whole achieves the goal, whether each price is realistic, whether each step serves its parent, whether the URL is a legit merchant, and whether it sells the item. A check passes when P(yes) clears its threshold (70% for "legit merchant", 50% otherwise). A judgment that errors counts as a fail. Text work (the review summary, reading the goal and budget from your request) uses a Groq model through [byLLM](https://github.com/jaseci-labs/jac).
 
 ## Files
 
 | File | What |
 |---|---|
-| `vetting.jac` | Plan graph (Jac nodes/edges), deterministic checks, byLLM judges |
+| `vetting.jac` | Plan graph (Jac nodes/edges), rules, Jev judgments, byLLM text |
 | `server.py` | MCP tools, state, Stripe authorization |
-| `app.py`, `ui.html` | Web app: your prompt → Groq agent driving the MCP server |
+| `app.py`, `ui.html` | Web app: your prompt → browsing Groq agent driving the MCP server |
 | `prompts/CreatePlanGraph.md` | Planning instructions sent to the agent |
 | `blacklist.txt` | Blocked domains (subdomains included) |
 | `test_vetting.py` | Deterministic checks, no network |
@@ -24,7 +24,11 @@ Checks that are arithmetic are deterministic: the goal and budget match the mand
 uv run python app.py
 ```
 
-Open http://127.0.0.1:8000, describe what you want with a budget, confirm the goal and budget it reads out, and press **Start agent**. A Groq agent then starts its own copy of the MCP server with that mandate. It plans, gets rejected and revises, and buys items. The page shows each step, the plan with its prices, and a budget meter. If the agent asks you something, reply in the box at the bottom.
+Open http://127.0.0.1:8000, describe what you want with a budget, confirm the goal and budget it reads out, and press **Start agent**. A Groq agent then starts its own copy of the MCP server with that mandate. It searches the web for real products, plans, gets rejected and revises, and buys items.
+
+- **Agent** (left): the conversation. If the agent asks you something, reply at the bottom.
+- **Purchase graph** (middle): items on the left roll up through steps into the goal. Cards show price, status, and the product photo once bought. Money flows along the edges of bought items. Switch between plan attempts at the top.
+- **Lens** (right): *Why* explains the latest decision, or any card you click: every rule and every Jev probability against its threshold, plus the exact question Jev was asked. *Trace* is the timeline: the agent's reasoning, searches, pages opened, tool calls and results.
 
 ## Setup
 
@@ -32,10 +36,11 @@ Open http://127.0.0.1:8000, describe what you want with a budget, confirm the go
 
 ```
 GROQ_API_KEY=...
+JEV_API_KEY=...                 # TypeSafe Jev, for the yes/no judgments
 STRIPE_SECRET_KEY=sk_test_...   # test-mode keys only; live keys are refused
-# AGENT_MODEL=groq/openai/gpt-oss-120b   # the agent in the web app (any LiteLLM model string)
-# JUDGE_MODEL=groq/openai/gpt-oss-20b    # judges; a different model than the agent means a separate Groq rate limit
-# JUDGE_WORKERS=3                        # parallel judges; raise on a paid Groq tier
+# AGENT_MODEL=openai/gpt-oss-120b   # Groq model for the web app agent; web browsing needs a gpt-oss model
+# TEXT_MODEL=groq/openai/gpt-oss-20b # summaries and reading the mandate (any LiteLLM model string)
+# JEV_MODEL=jev-latest              # pin a version (e.g. jev-1.13.0) to keep thresholds stable
 ```
 
 To use the MCP server from another client (Claude Code, Cursor, …), set the goal and budget in its config. The agent can't change them. `REQUEST` (optional) is your original wording, which the judges use as context:
@@ -56,7 +61,7 @@ To use the MCP server from another client (Claude Code, Cursor, …), set the go
 
 - `get_plan_instructions()`: the planning prompt, filled in with the goal and budget.
 - `submit_plan(nodes, edges)`: vets the plan. Returns `accepted`, a `summary`, and per-check `findings`. Resubmitting replaces the accepted plan (for example, when an item's price was underestimated).
-- `purchase(node_id, item_name, payment_url, price)`: vets the purchase, then authorizes it in Stripe. Returns the PaymentIntent id (`requires_capture`), `spent` and `remaining`.
+- `purchase(node_id, item_name, payment_url, price)`: vets the purchase, then authorizes it in Stripe. Returns the PaymentIntent id (`requires_capture`), `spent`, `remaining`, and the product page's photo (`image`) when it has one.
 
 ## Test
 
@@ -67,7 +72,8 @@ uv run python test_vetting.py
 ## Limits
 
 - State is in memory, one mandate per server process.
-- The URL judges see only the URL. They don't fetch the page.
-- Judge prompts tell the model to treat agent text as data, but prompt injection through item names or URLs is still possible. The deterministic checks (price, budget, blacklist) don't depend on the LLM.
-- On free-tier Groq (8k tokens/min per model), a full run takes a few minutes because calls back off on rate limits.
+- The URL judgments see only the URL, not the page.
+- Agent-written text only goes into Jev's state, never into the questions, but a crafted item name could still sway a judgment. The rules (price, budget, blacklist) don't depend on any model.
+- Product photos come from the page's preview image. Amazon and eBay block this, so those items show a letter instead.
+- On free-tier Groq (8k tokens/min), the agent's browsing makes a full run take a few minutes.
 - The web app runs one mandate at a time. The judges see your first message, not later replies.

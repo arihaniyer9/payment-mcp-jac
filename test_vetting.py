@@ -25,7 +25,7 @@ PLAN = {
 def errors(mutate):
     p = copy.deepcopy(PLAN)
     mutate(p)
-    return build_and_validate(p, GOAL, BUDGET)["errors"]
+    return [e["rule"] + ": " + e["msg"] for e in build_and_validate(p, GOAL, BUDGET)["errors"]]
 
 
 def node(p, id):
@@ -33,8 +33,8 @@ def node(p, id):
 
 
 assert errors(lambda p: None) == []
-assert any("mandated goal" in e for e in errors(lambda p: node(p, "g").update(name="Something else")))
-assert any("sum of children" in e for e in errors(lambda p: node(p, "food").update(price=40)))
+assert any(e.startswith("goal:") and "mandated goal" in e for e in errors(lambda p: node(p, "g").update(name="Something else")))
+assert any(e.startswith("sums:") for e in errors(lambda p: node(p, "food").update(price=40))) and any("sum of children" in e for e in errors(lambda p: node(p, "food").update(price=40)))
 assert any("illegal edge" in e for e in errors(lambda p: p["edges"].append({"child": "cake", "parent": "g"})))
 assert any("exactly one parent" in e for e in errors(lambda p: p["edges"].pop()))
 assert any("invalid price" in e for e in errors(lambda p: node(p, "cake").update(price=float("nan"))))
@@ -44,20 +44,20 @@ assert any("exactly one goal" in e for e in errors(lambda p: node(p, "deco").upd
 def over_budget(p):
     for id in ("g", "food", "cake"):
         node(p, id)["price"] += 50
-assert any("exceeds budget" in e for e in errors(over_budget))
+assert any(e.startswith("budget:") and "exceeds budget" in e for e in errors(over_budget))
 
 
 def cycle(p):  # food <-> deco loop, detached from goal
     p["edges"] = [e for e in p["edges"] if e["parent"] != "g"]
     p["edges"] += [{"child": "food", "parent": "deco"}, {"child": "deco", "parent": "food"}]
-assert any("does not lead to the goal" in e for e in errors(cycle))
+assert any(e.startswith("tree:") and "does not lead to the goal" in e for e in errors(cycle))
 
 cake = {"name": "Cake", "price": 30.0}
 ok = dict(item=cake, item_name="Cake", url="https://bakery.example.com/buy", price=29.99,
           spent=0.0, budget=BUDGET, blacklist=["evil.com"])
 assert purchase_rule_failures(**ok) == []
-assert purchase_rule_failures(**{**ok, "price": 31}) != []           # over estimate
-assert purchase_rule_failures(**{**ok, "spent": 80}) != []           # over budget
+assert [f["rule"] for f in purchase_rule_failures(**{**ok, "price": 31})] == ["price"]   # over estimate
+assert [f["rule"] for f in purchase_rule_failures(**{**ok, "spent": 80})] == ["budget"]  # over budget
 assert purchase_rule_failures(**{**ok, "item_name": "Pie"}) != []    # wrong item
 assert purchase_rule_failures(**{**ok, "url": "http://bakery.example.com"}) != []
 assert purchase_rule_failures(**{**ok, "url": "https://shop.evil.com/x"}) != []

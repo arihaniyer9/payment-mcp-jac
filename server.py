@@ -4,9 +4,11 @@ Ground truth (GOAL, BUDGET, optional REQUEST) comes from the human via env, neve
 Run: GOAL="..." BUDGET=100 uv run python server.py
 """
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urljoin
 
 from dotenv import load_dotenv
 
@@ -14,6 +16,7 @@ HERE = Path(__file__).parent
 load_dotenv(HERE / ".env")
 
 import jaclang  # noqa: E402,F401  registers the .jac import hook
+import httpx  # noqa: E402
 import stripe  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -82,16 +85,38 @@ def purchase(node_id: str, item_name: str, payment_url: str, price: float) -> di
             return {"approved": False, "error": f"'{node_id}' is not an item in the accepted plan"}
         if node_id in purchased:
             return {"approved": False, "error": f"'{node_id}' already purchased ({purchased[node_id]})"}
-        result = vet_purchase(item, item_name, payment_url, price, spent, BUDGET, BLACKLIST)
+        result = vet_purchase(node_id, item, item_name, payment_url, price, spent, BUDGET, BLACKLIST)
         if not result["approved"]:
             return result
+        result["image"] = product_image(payment_url)  # only fetched once every check passed
         try:
             intent = authorize(node_id, item_name, payment_url, price)
         except Exception as e:
-            return {"approved": False, "findings": result["findings"], "error": f"payment authorization failed: {e}"}
+            return {**result, "approved": False, "error": f"payment authorization failed: {e}"}
         purchased[node_id] = intent.id
         spent += price
         return {**result, "payment_intent": intent.id, "status": intent.status, "spent": spent, "remaining": BUDGET - spent}
+
+
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Accept": "text/html",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+OG_IMAGE = re.compile(
+    r"""<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)"""
+    r"""|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)["']"""
+)
+
+
+def product_image(url: str) -> str | None:
+    """The product page's preview image, if it exposes one. Best effort: Amazon and eBay block this."""
+    try:
+        html = httpx.get(url, headers=BROWSER_HEADERS, follow_redirects=True, timeout=8).text
+    except httpx.HTTPError:
+        return None
+    m = OG_IMAGE.search(html)
+    return urljoin(url, m.group(1) or m.group(2)) if m else None
 
 
 def authorize(node_id: str, item_name: str, url: str, price: float):
