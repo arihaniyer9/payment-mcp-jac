@@ -7,8 +7,12 @@ import from jac.graph {
     PaysTo, Mode, Verdict, get_settings_node, find_request
 }
 import from jac.evidence {
-    register_email, register_instruction, register_vendor, register_invoice,
-    evidence_view
+    register_email, evidence_view, normalize_account, to_cents
+}
+import jac.evidence as ev_registry;
+import from jac.context {
+    upsert_vendor, upsert_invoice, upsert_instruction,
+    vendor_view, invoice_view, instruction_view
 }
 import from jac.seed { reset_seed_data }
 import from jac.pipeline { decision_view }
@@ -151,6 +155,58 @@ def:pub get_decision(api_key: str = "", request_id: str = "") -> dict[str, any] 
 }
 
 
+# ---------- Context Registration API (admin key) ----------
+# The developer's app registers the same ground truth it gives its own agent,
+# over a channel the agent never touches. reset_demo uses these same upserts.
+
+def:pub register_vendor(
+    api_key: str = "", name: str = "", known_account: str = ""
+) -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    if name.strip() == "" or normalize_account(known_account) == "" {
+        return fail("BAD_REQUEST", "name and known_account are required.");
+    }
+    return ok({"vendor": vendor_view(upsert_vendor(name.strip(), known_account.strip()))});
+}
+
+
+def:pub register_invoice(
+    api_key: str = "", invoice_id: str = "", vendor_name: str = "",
+    amount: any = None, period: str = ""
+) -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    cents = to_cents(amount);
+    if invoice_id.strip() == "" or cents is None or cents <= 0 {
+        return fail("BAD_REQUEST", "invoice_id and a positive amount are required.");
+    }
+    inv = upsert_invoice(invoice_id, vendor_name, cents, period.strip());
+    if inv is None {
+        return fail("NOT_FOUND", f"Vendor '{vendor_name}' is not registered. Call register_vendor first.");
+    }
+    return ok({"invoice": invoice_view(inv)});
+}
+
+
+def:pub register_instruction(
+    api_key: str = "", text: str = "", instruction_id: str = ""
+) -> dict[str, any] {
+    denied = authorize(api_key, Role.ADMIN);
+    if denied is not None {
+        return denied;
+    }
+    if text.strip() == "" {
+        return fail("BAD_REQUEST", "text is required.");
+    }
+    return ok({"instruction": instruction_view(upsert_instruction(text.strip(), instruction_id.strip()))});
+}
+
+
 # ---------- agent read tools: every value handed out is recorded as Evidence ----------
 
 def:pub read_inbox(api_key: str = "") -> dict[str, any] {
@@ -179,7 +235,7 @@ def:pub get_instructions(api_key: str = "") -> dict[str, any] {
     }
     items: list[dict[str, any]] = [];
     for ins in [root -->][?:Instruction] {
-        evs = register_instruction(ins);
+        evs = ev_registry.register_instruction(ins);
         items.append({
             "instruction_id": ins.instruction_id, "text": ins.text,
             "created_at": ins.created_at, "trusted": True,
@@ -197,10 +253,10 @@ def:pub get_vendors(api_key: str = "") -> dict[str, any] {
     }
     items: list[dict[str, any]] = [];
     for v in [root -->][?:Vendor] {
-        evs = register_vendor(v);
+        evs = ev_registry.register_vendor(v);
         invoices: list[dict[str, any]] = [];
         for inv in [v <-:PaysTo:<-][?:Invoice] {
-            inv_evs = register_invoice(inv);
+            inv_evs = ev_registry.register_invoice(inv);
             invoices.append({
                 "invoice_id": inv.invoice_id, "period": inv.period,
                 "amount": inv.amount_cents / 100, "paid": inv.paid,

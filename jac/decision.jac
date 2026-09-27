@@ -1,6 +1,7 @@
 """Decision engine (deterministic) and the RULES_ONLY baseline."""
 import from jac.graph { PaymentRequest, Settings, CheckResult, Verdict, Severity }
 import from jac.evidence { normalize_name }
+import jac.messages as msg;
 
 
 """Precedence: HARD fail -> DENY; pending questions -> NEEDS_ANSWERS;
@@ -31,12 +32,14 @@ def rules_only_checks(pr: PaymentRequest, s: Settings) -> list[CheckResult] {
             severity=Severity.HARD.value,
             detail=(f"Amount ${pr.amount_cents / 100:,.2f} is within" if under_cap
                     else f"Amount ${pr.amount_cents / 100:,.2f} exceeds")
-                + f" the cap ${s.per_txn_cap_cents / 100:,.2f}."
+                + f" the cap ${s.per_txn_cap_cents / 100:,.2f}.",
+            user_message=msg.msg_rules_cap(pr, s.per_txn_cap_cents, under_cap)
         ),
         CheckResult(
             name="rules.allowlist", passed=allowed, severity=Severity.HARD.value,
             detail=f"Payee '{pr.payee_name}' is " + ("" if allowed else "not ")
-                + "on the allowlist."
+                + "on the allowlist.",
+            user_message=msg.msg_rules_allowlist(pr, allowed)
         )
     ];
 }

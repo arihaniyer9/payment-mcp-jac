@@ -1,14 +1,18 @@
 """Demo seed data (build prompt section 9), reset by update-in-place.
 
-Seed nodes (Settings, Vendor, Invoice, Instruction, Email) and the PaysTo edges
-between them are created ONCE and then only have their field values restored.
-Run artifacts (PaymentRequest, CheckResult, Evidence, AuditEntry, and later
-Question) are deleted on every reset.
+Vendors, invoices and instructions are written through the SAME upserts the
+Context Registration API uses (jac/context.jac). Emails are demo-only inbox
+data with no registration endpoint, so they are restored here, also in place.
+
+Run artifacts (PaymentRequest, CheckResult, Question, Evidence, AuditEntry)
+are deleted on every reset. Nothing in the reset path creates a node of a type
+it also deletes (engine quirk, see NOTES.md).
 """
 import from jac.graph {
-    Settings, Vendor, Invoice, Email, Instruction, PaysTo,
-    PaymentRequest, CheckResult, Evidence, AuditEntry, HasCheck
+    Settings, Email, PaymentRequest, CheckResult, Question, Evidence, AuditEntry,
+    HasCheck, HasQuestion
 }
+import from jac.context { upsert_vendor, upsert_invoice, upsert_instruction }
 
 # ---------- seed values (single source of truth) ----------
 
@@ -18,9 +22,9 @@ glob VENDORS: list[dict[str, any]] = [
 
 glob INVOICES: list[dict[str, any]] = [
     {"invoice_id": "INV-4471", "vendor_name": "Acme Supplies", "amount_cents": 420000,
-     "period": "March", "paid": False},
+     "period": "March"},
     {"invoice_id": "INV-4502", "vendor_name": "Acme Supplies", "amount_cents": 435000,
-     "period": "April", "paid": False}
+     "period": "April"}
 ];
 
 glob INSTRUCTIONS: list[dict[str, any]] = [
@@ -63,6 +67,9 @@ def clear_run_artifacts {
         for c in [pr ->:HasCheck:->][?:CheckResult] {
             del c;
         }
+        for q in [pr ->:HasQuestion:->][?:Question] {
+            del q;
+        }
         del pr;
     }
     for ev in [root -->][?:Evidence] {
@@ -79,9 +86,6 @@ def clear_run_artifacts {
 def _restore_settings {
     found = [root -->][?:Settings];
     s = found[0] if found else (root ++> Settings());
-    for extra in found[1:] {
-        del extra;
-    }
     defaults = Settings();
     s.mode = defaults.mode;
     s.llm_checks_enabled = defaults.llm_checks_enabled;
@@ -91,89 +95,8 @@ def _restore_settings {
 }
 
 
-def _restore_vendors -> dict[str, Vendor] {
-    by_name: dict[str, Vendor] = {};
-    for v in [root -->][?:Vendor] {
-        if v.name in by_name {
-            del v;
-        } else {
-            by_name[v.name] = v;
-        }
-    }
-    for spec in VENDORS {
-        v = by_name.get(spec["name"]);
-        if v is None {
-            v = root ++> Vendor(name=spec["name"], known_account="");
-            by_name[spec["name"]] = v;
-        }
-        v.known_account = spec["known_account"];
-        v.first_seen = spec["first_seen"];
-    }
-    return by_name;
-}
-
-
-def _restore_invoices(vendors: dict[str, Vendor]) {
-    by_id: dict[str, Invoice] = {};
-    for inv in [root -->][?:Invoice] {
-        if inv.invoice_id in by_id {
-            del inv;
-        } else {
-            by_id[inv.invoice_id] = inv;
-        }
-    }
-    for spec in INVOICES {
-        inv = by_id.get(spec["invoice_id"]);
-        if inv is None {
-            inv = root ++> Invoice(
-                invoice_id=spec["invoice_id"], vendor_name="", amount_cents=0, period=""
-            );
-        }
-        inv.vendor_name = spec["vendor_name"];
-        inv.amount_cents = spec["amount_cents"];
-        inv.period = spec["period"];
-        inv.paid = spec["paid"];
-        vendor = vendors[spec["vendor_name"]];
-        links = [inv ->:PaysTo:->][?:Vendor];
-        if len(links) != 1 or links[0] != vendor {
-            for e in [edge inv ->:PaysTo:->] {
-                del e;
-            }
-            inv +>:PaysTo():+> vendor;
-        }
-    }
-}
-
-
-def _restore_instructions {
-    by_id: dict[str, Instruction] = {};
-    for i in [root -->][?:Instruction] {
-        if i.instruction_id in by_id {
-            del i;
-        } else {
-            by_id[i.instruction_id] = i;
-        }
-    }
-    for spec in INSTRUCTIONS {
-        ins = by_id.get(spec["instruction_id"]);
-        if ins is None {
-            ins = root ++> Instruction(instruction_id=spec["instruction_id"], text="", created_at="");
-        }
-        ins.text = spec["text"];
-        ins.created_at = spec["created_at"];
-    }
-}
-
-
 def _restore_emails {
-    by_id: dict[str, Email] = {};
-    for em in [root -->][?:Email] {
-        if em.email_id in by_id {
-            del em;
-        } else {
-            by_id[em.email_id] = em;
-        }
-    }
+    by_id: dict[str, Email] = {em.email_id: em for em in [root -->][?:Email]};
     for spec in EMAILS {
         em = by_id.get(spec["email_id"]);
         if em is None {
@@ -189,12 +112,19 @@ def _restore_emails {
 }
 
 
-"""Reset the demo: delete run artifacts, restore seed values in place.
-Idempotent: node/edge counts are identical after every call."""
+"""Reset the demo: delete run artifacts, then write the Acme seed through the
+Context Registration upserts. Idempotent: node/edge counts identical per call."""
 def reset_seed_data {
     clear_run_artifacts();
     _restore_settings();
-    _restore_invoices(_restore_vendors());
-    _restore_instructions();
+    for v in VENDORS {
+        upsert_vendor(v["name"], v["known_account"], v["first_seen"]);
+    }
+    for inv in INVOICES {
+        upsert_invoice(inv["invoice_id"], inv["vendor_name"], inv["amount_cents"], inv["period"]);
+    }
+    for ins in INSTRUCTIONS {
+        upsert_instruction(ins["text"], ins["instruction_id"], ins["created_at"]);
+    }
     _restore_emails();
 }

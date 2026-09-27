@@ -14,6 +14,7 @@ import from jac.graph {
 import from jac.evidence { to_cents, now_iso }
 import from jac.checks_det { provenance_check, history_check }
 import from jac.decision { decide, rules_only_checks }
+import jac.messages as msg;
 
 
 def check_view(c: CheckResult) -> dict[str, any] {
@@ -22,7 +23,8 @@ def check_view(c: CheckResult) -> dict[str, any] {
         "passed": c.passed,
         "severity": c.severity,
         "detail": c.detail,
-        "evidence_node_ids": c.evidence_node_ids
+        "evidence_node_ids": c.evidence_node_ids,
+        "user_message": c.user_message
     };
 }
 
@@ -31,6 +33,7 @@ def decision_view(pr: PaymentRequest) -> dict[str, any] {
     return {
         "request_id": pr.request_id,
         "verdict": pr.verdict,
+        "summary": pr.summary,
         "checks": [check_view(c) for c in [pr ->:HasCheck:->][?:CheckResult]],
         "questions": [],
         "payment_ref": pr.payment_ref,
@@ -88,7 +91,8 @@ def execute_payment(pr: PaymentRequest) {
         pr.status = "GATEWAY_ERROR";
         err = CheckResult(
             name="gateway.execute", passed=False, severity="INFO",
-            detail=f"Gateway call failed: {str(e)[:200]}"
+            detail=f"Gateway call failed: {str(e)[:200]}",
+            user_message=msg.msg_gateway_error()
         );
         pr +>:HasCheck():+> err;
     }
@@ -142,6 +146,7 @@ def:pub request_payment(api_key: str = "", req: dict[str, any] = {}) -> dict[str
     } elif pr.verdict == Verdict.DENY.value {
         pr.status = "BLOCKED";
     }
+    pr.summary = msg.summarize(pr, [pr ->:HasCheck:->][?:CheckResult]);
     root ++> AuditEntry(ts=now_iso(), event="DECISION", request_id=request_id, detail=pr.verdict);
     return ok(decision_view(pr) | {"idempotent_replay": False});
 }

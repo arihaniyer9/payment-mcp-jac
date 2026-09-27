@@ -90,15 +90,29 @@ def _next_evidence_id -> str {
 
 
 """Register one value from one source. Idempotent per (source, kind, value):
-calling read_inbox twice returns the same evidence ids."""
+calling read_inbox twice returns the same evidence ids.
+
+single_valued=True (a vendor's account on file, an invoice's amount) means the
+source holds ONE current value of this kind. If a developer re-registers it
+with a new value, the old Evidence stops counting as trusted, so a stale
+account can never vouch for a payment."""
 def register(
     source: Email | Instruction | Vendor | Invoice, source_type: str, source_id: str, kind: str,
-    raw_value: str, trusted: bool
+    raw_value: str, trusted: bool, single_valued: bool = False
 ) -> Evidence {
     normalized = normalize_value(kind, raw_value);
     for ev in [source <-:DerivedFrom:<-][?:Evidence] {
         if ev.kind == kind and ev.normalized_value == normalized {
+            ev.trusted = trusted;
             return ev;
+        }
+    }
+    if single_valued {
+        for ev in [source <-:DerivedFrom:<-][?:Evidence] {
+            if ev.kind == kind and ev.trusted {
+                ev.trusted = False;
+                ev.source_type = ev.source_type + "_SUPERSEDED";
+            }
         }
     }
     ev = root ++> Evidence(
@@ -171,7 +185,7 @@ def register_vendor(v: Vendor) -> list[Evidence] {
     src = SourceType.VENDOR_RECORD.value;
     return [
         register(v, src, v.name, EvidenceKind.NAME.value, v.name, True),
-        register(v, src, v.name, EvidenceKind.ACCOUNT.value, v.known_account, True)
+        register(v, src, v.name, EvidenceKind.ACCOUNT.value, v.known_account, True, True)
     ];
 }
 
@@ -183,7 +197,7 @@ def register_invoice(inv: Invoice) -> list[Evidence] {
     return [
         register(inv, src, inv.invoice_id, EvidenceKind.INVOICE_ID.value, inv.invoice_id, True),
         register(inv, src, inv.invoice_id, EvidenceKind.AMOUNT.value,
-            f"{inv.amount_cents / 100:.2f}", True)
+            f"{inv.amount_cents / 100:.2f}", True, True)
     ];
 }
 
