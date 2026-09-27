@@ -1,60 +1,71 @@
 """MCP server for any MCP client (Claude Code, Cursor, ...): the same vetting as the web app.
 
-Ground truth (GOAL, BUDGET, optional REQUEST) comes from the human's client config, never from the agent.
+The goal comes from the user's prompt, which the agent passes to get_plan_instructions once per session.
+BUDGET comes from the server's environment, never from the agent.
 As in the web app, a purchase page must load when the server fetches it, and the price must be listed on it.
 
-Run: GOAL="..." BUDGET=100 jac run mcp_server.jac
+Run: BUDGET=100 jac run mcp_server.jac
 """
 import os;
 import time;
-import from mcp.server.mcpserver { MCPServer }
+import from mcp.server.mcpserver { MCPServer, Context }
 import from services.models { Mandate }
 import from services.tools { plan_instructions, submit_plan as vet_submitted_plan, purchase as vet_and_buy }
-import from services.vetting { money, num }
+import from services.vetting { money, num, extract_mandate, retrying }
 
 glob mcp = MCPServer("plan-graph-payments");
-glob mandate: Mandate | None = None;
+# ponytail: one mandate per client session, kept for the process lifetime; evict old sessions if memory matters.
+glob mandates: dict[int, Mandate] = {};
+glob NO_GOAL = {"ok": False, "error": "No goal yet. Call get_plan_instructions with the user's request first."};
 
-"""This process's mandate. Created once from the environment and kept in the graph as an audit trail."""
-def current() -> Mandate {
-    global mandate;
-    if mandate is None {
-        goal = os.environ["GOAL"];
-        m = Mandate(goal=goal, budget=money(num(os.environ["BUDGET"])), request=os.getenv("REQUEST", goal), created_at=time.time());
-        root ++> m;
-        mandate = m;
-    }
-    return mandate;
+"""This session's mandate, once get_plan_instructions has set its goal. Kept in the graph as an audit trail."""
+def current(ctx: Context) -> Mandate | None {
+    return mandates.get(id(ctx.session));
 }
 
-def logged(name: str, args: dict, result: dict) -> dict {
-    m = current();
+def logged(m: Mandate, name: str, args: dict, result: dict) -> dict {
     m.log("tool_result", "mcp", {"name": name, "args": args, "result": result});
     return result;
 }
 
-"""Step 1. Get the instructions for building the plan graph for the user's goal and budget."""
+"""Step 1. Pass the user's request verbatim (their own words: what they want and why). Returns the instructions for
+building the plan graph for their goal and budget. The goal is fixed for the session after the first call."""
 @mcp.tool()
-def get_plan_instructions() -> str {
-    return plan_instructions(current());
+def get_plan_instructions(request: str, ctx: Context) -> str {
+    m = current(ctx);
+    if m is None {
+        goal = retrying(extract_mandate, request).goal;
+        m = Mandate(goal=goal, budget=money(num(os.environ["BUDGET"])), request=request, created_at=time.time());
+        root ++> m;
+        mandates[id(ctx.session)] = m;
+    }
+    return plan_instructions(m);
 }
 
 """Step 2. Submit the plan graph for vetting. nodes: [{id, kind: item|subgoal|goal, name, price}], edges: [{child, parent}].
 On rejection, fix the findings and resubmit. Resubmitting also replaces an accepted plan, e.g. when an item price was underestimated."""
 @mcp.tool()
-def submit_plan(nodes: list[dict], edges: list[dict]) -> dict {
-    return logged("submit_plan", {"nodes": nodes, "edges": edges}, vet_submitted_plan(current(), nodes, edges));
+def submit_plan(nodes: list[dict], edges: list[dict], ctx: Context) -> dict {
+    m = current(ctx);
+    if m is None {
+        return NO_GOAL;
+    }
+    return logged(m, "submit_plan", {"nodes": nodes, "edges": edges}, vet_submitted_plan(m, nodes, edges));
 }
 
 """Step 3. Request payment for one item node of the accepted plan. price is the USD price listed at payment_url."""
 @mcp.tool()
-def purchase(node_id: str, item_name: str, payment_url: str, price: float) -> dict {
+def purchase(node_id: str, item_name: str, payment_url: str, price: float, ctx: Context) -> dict {
+    m = current(ctx);
+    if m is None {
+        return NO_GOAL;
+    }
     args = {"node_id": node_id, "item_name": item_name, "payment_url": payment_url, "price": price};
-    return logged("purchase", args, vet_and_buy(current(), "mcp", node_id, item_name, payment_url, price));
+    return logged(m, "purchase", args, vet_and_buy(m, "mcp", node_id, item_name, payment_url, price));
 }
 
 with entry:__main__ {
-    _ = current();
+    _ = money(num(os.environ["BUDGET"]));  # fail at startup, not mid-session, if BUDGET is missing
     # Hosts like Render set PORT: serve streamable HTTP at /mcp. Otherwise stdio for local clients.
     if os.getenv("PORT") {
         mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ["PORT"]));
